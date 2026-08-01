@@ -1,0 +1,10 @@
+[package]
+name = "vend_ast"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "vend_ast"
+path = "src/lib.rs"
+
+[dependencies]
