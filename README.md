@@ -28,6 +28,17 @@ That means VEND is built to catch things like:
 - control-flow mistakes through structured `if` and `while` forms
 - ambiguous memory operands through explicit addressing forms
 
+## How People Will Use It
+
+The long-term shape of the tool is simple:
+
+- write VEND source files
+- run the compiler or checker from the command line
+- get either a compiled binary or a precise diagnostic
+- use the output in real systems code, not just in a toy demo
+
+That is why the repository is being built with documentation, tests, and stage-by-stage implementation instead of a single giant code drop.
+
 ## What Is In This Repo Right Now
 
 This repository currently holds the stage 1 language model:
