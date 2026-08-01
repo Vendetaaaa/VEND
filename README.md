@@ -23,6 +23,9 @@ This repository currently holds the stage 1 language model:
 - a grammar reference string for the language surface
 - tests that build nested ASTs directly in memory
 
+## Install, build, run
+/
+
 ## License
 
 This project uses the MIT License. See [LICENSE](LICENSE).
