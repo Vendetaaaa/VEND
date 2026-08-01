@@ -4,7 +4,7 @@ VEND is a register-aliased assembly language for low-level systems work.
 
 It keeps the machine-level feel of assembly, but adds lexical scopes, explicit register binding, strict operand widths, and structured control flow so the compiler can catch the mistakes that usually show up late.
 
-If you want the short version / segmentat:
+If you want the short version / segments:
 
 - [Why VEND exists](docs/overview.md)
 - [What problems it solves](docs/overview.md#what-vend-solves)
