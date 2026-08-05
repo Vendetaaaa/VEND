@@ -10,6 +10,7 @@ fn builds_nested_ast_without_parser_state() {
         name: "ptr".into(),
         width: RegisterWidth::Reg64,
         physical: PhysicalRegister::RAX,
+        span: None,
     };
 
     let load = Instruction {
