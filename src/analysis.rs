@@ -14,6 +14,10 @@ pub fn validate_aliases(block: &ScopeBlock) -> Vec<Diagnostic> {
             match stmt {
                 Statement::AliasDecl(a) => {
                     for &other in active.iter() {
+                        // Allow shadows for aliases
+                        if a name == other.name {
+                            continue;
+                        }
                         if a.physical.overlaps(other.physical) {
                             let msg = format!(
                                 "Alias conflict: '{}' ({}) overlaps '{}' ({})",
@@ -57,6 +61,19 @@ pub fn validate_aliases(block: &ScopeBlock) -> Vec<Diagnostic> {
     walk(block, &mut active, &mut diags);
     diags
 }
+
+// full analysis across program
+pub fn analyze_program(prog: &crate::ast::Program) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    for func in &prog.functions {
+        let mut func_diags = validate_aliases(&func.body);
+        for d in func_diags.drain(..) {
+            let msg = format!("In function '{}': {}", func.name, d.0);
+            diags.push(Diagnostic(msg));
+        }
+    }
+    diags
+}        
 
 #[cfg(test)]
 mod tests {
