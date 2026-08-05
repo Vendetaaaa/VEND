@@ -3,5 +3,7 @@
 
 pub mod ast;
 pub mod grammar;
+pub mod analysis;
 
 pub use ast::*;
+pub use analysis::*;
