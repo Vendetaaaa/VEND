@@ -2,7 +2,10 @@ use crate::ast::*;
 
 /// diagnosis
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Diagnostic(pub String);
+pub struct Diagnostic {
+    pub message: String,
+    pub span: Option<Span>,
+}
 
 /// validates aliasis to prevent overriding
 pub fn validate_aliases(block: &ScopeBlock) -> Vec<Diagnostic> {
@@ -26,7 +29,8 @@ pub fn validate_aliases(block: &ScopeBlock) -> Vec<Diagnostic> {
                                 other.name,
                                 other.physical
                             );
-                            diags.push(Diagnostic(msg));
+                            let span = a.span.or(other.span);
+                            diags.push(Diagnostic { message: msg, span });
                         }
                     }
                     active.push(a);
@@ -68,8 +72,8 @@ pub fn analyze_program(prog: &crate::ast::Program) -> Vec<Diagnostic> {
     for func in &prog.functions {
         let mut func_diags = validate_aliases(&func.body);
         for d in func_diags.drain(..) {
-            let msg = format!("In function '{}': {}", func.name, d.0);
-            diags.push(Diagnostic(msg));
+            let msg = format!("In function '{}': {}", func.name, d.message);
+            diags.push(Diagnostic { message: msg, span: d.span });
         }
     }
     diags
@@ -86,12 +90,14 @@ mod tests {
             name: "a".into(),
             width: RegisterWidth::Reg64,
             physical: PhysicalRegister::RAX,
+            span: None,
         };
 
         let a2 = AliasDecl {
             name: "b".into(),
             width: RegisterWidth::Reg32,
             physical: PhysicalRegister::EAX,
+            span: None,
         };
 
         let block = ScopeBlock {
@@ -100,7 +106,7 @@ mod tests {
 
         let diags = validate_aliases(&block);
         assert!(!diags.is_empty(), "expected a conflict diagnostic");
-        assert!(diags[0].0.contains("overlaps"));
+        assert!(diags[0].message.contains("overlaps"));
     }
 
     #[test]
@@ -109,12 +115,14 @@ mod tests {
             name: "a".into(),
             width: RegisterWidth::Reg64,
             physical: PhysicalRegister::RAX,
+            span: None,
         };
 
         let a2 = AliasDecl {
             name: "b".into(),
             width: RegisterWidth::Reg64,
             physical: PhysicalRegister::RBX,
+            span: None,
         };
 
         let block = ScopeBlock {
@@ -131,12 +139,14 @@ mod tests {
             name: "p".into(),
             width: RegisterWidth::Reg64,
             physical: PhysicalRegister::RAX,
+            span: None,
         };
 
         let child = AliasDecl {
             name: "c".into(),
             width: RegisterWidth::Reg16,
             physical: PhysicalRegister::AX,
+            span: None,
         };
 
         let child_block = ScopeBlock {
