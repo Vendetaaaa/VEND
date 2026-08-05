@@ -2,6 +2,13 @@ use std::fmt;
 
 pub type Ident = String;
 
+// parser will populate soon
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Span {
+    pub start: usize,
+    pub end: usize,
+}
+
 // atm just a list off functions
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Program {
@@ -38,6 +45,7 @@ pub struct AliasDecl {
     pub name: Ident,
     pub width: RegisterWidth,
     pub physical: PhysicalRegister,
+    pub span: Option<Span>,
 }
 
 // for now it stays legal
