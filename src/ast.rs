@@ -278,6 +278,74 @@ impl fmt::Display for PhysicalRegister {
     }
 }
 
+impl PhysicalRegister {
+    // returns a compact index for the 64-bit root
+    // RAX, RBX, RCX, RDX, RSI, RDI, RBP, RSP, R8..R15
+    // from 0 to 15
+    pub const fn root_index(self) -> u8 {
+        match self {
+            Self::RAX | Self::EAX | Self::AX | Self::AL | Self::AH => 0,
+            Self::RBX | Self::EBX | Self::BX | Self::BL | Self::BH => 1,
+            Self::RCX | Self::ECX | Self::CX | Self::CL | Self::CH => 2,
+            Self::RDX | Self::EDX | Self::DX | Self::DL | Self::DH => 3,
+            Self::RSI | Self::ESI | Self::SI | Self::SIL => 4,
+            Self::RDI | Self::EDI | Self::DI | Self::DIL => 5,
+            Self::RBP | Self::EBP | Self::BP | Self::BPL => 6,
+            Self::RSP | Self::ESP | Self::SP | Self::SPL => 7,
+            Self::R8 | Self::R8D | Self::R8W | Self::R8B => 8,
+            Self::R9 | Self::R9D | Self::R9W | Self::R9B => 9,
+            Self::R10 | Self::R10D | Self::R10W | Self::R10B => 10,
+            Self::R11 | Self::R11D | Self::R11W | Self::R11B => 11,
+            Self::R12 | Self::R12D | Self::R12W | Self::R12B => 12,
+            Self::R13 | Self::R13D | Self::R13W | Self::R13B => 13,
+            Self::R14 | Self::R14D | Self::R14W | Self::R14B => 14,
+            Self::R15 | Self::R15D | Self::R15W | Self::R15B => 15,
+        }
+    }
+
+    pub const fn bit_range(self) -> (u8, u8) {
+        match self {
+            // 64 bit full range
+            Self::RAX | Self::RBX | Self::RCX | Self::RDX | Self::RSI | Self::RDI | Self::RBP
+            | Self::RSP | Self::R8 | Self::R9 | Self::R10 | Self::R11 | Self::R12 | Self::R13
+            | Self::R14 | Self::R15 => (0, 64),
+
+            // 32 bit low
+            Self::EAX | Self::EBX | Self::ECX | Self::EDX | Self::ESI | Self::EDI | Self::EBP
+            | Self::ESP | Self::R8D | Self::R9D | Self::R10D | Self::R11D | Self::R12D | Self::R13D
+            | Self::R14D | Self::R15D => (0, 32),
+
+            // 16 bit low
+            Self::AX | Self::BX | Self::CX | Self::DX | Self::SI | Self::DI | Self::BP | Self::SP
+            | Self::R8W | Self::R9W | Self::R10W | Self::R11W | Self::R12W | Self::R13W | Self::R14W
+            | Self::R15W => (0, 16),
+
+            // 8 bit low
+            Self::AL | Self::BL | Self::CL | Self::DL | Self::SIL | Self::DIL | Self::BPL | Self::SPL
+            | Self::R8B | Self::R9B | Self::R10B | Self::R11B | Self::R12B | Self::R13B | Self::R14B
+            | Self::R15B => (0, 8),
+
+            // 8 bit High in low 16
+            Self::AH | Self::BH | Self::CH | Self::DH => (8, 8),
+        }
+    }
+
+    pub const fn overlaps(self, other: Self) -> bool {
+        if self.root_index() != other.root_index() {
+            return false;
+        }
+        let (s_start, s_width) = self.bit_range();
+        let (o_start, o_width) = other.bit_range();
+
+        // computing the end
+        let s_end = s_start as u16 + s_width as u16;
+        let o_end = o_start as u16 + o_width as u16;
+
+        !(s_end <= o_start as u16 || o_end <= s_start as u16)
+    }
+}
+
+
 // structures
 // base && index && displ
 #[derive(Debug, Clone, PartialEq, Eq)]
