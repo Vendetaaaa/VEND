@@ -88,3 +88,19 @@ fn register_width_names_match_textual_form() {
     assert_eq!(RegisterWidth::Reg16.as_str(), "reg16");
     assert_eq!(RegisterWidth::Reg8.as_str(), "reg8");
 }
+
+#[test]
+fn physical_register_overlap_is_detected() {
+    // 64 vs 32
+    assert!(PhysicalRegister::RAX.overlaps(PhysicalRegister::EAX));
+    // 16 vs L/H 8
+    assert!(PhysicalRegister::AX.overlaps(PhysicalRegister::AH));
+    assert!(PhysicalRegister::AX.overlaps(PhysicalRegister::AL));
+    // AH and AL
+    assert!(!PhysicalRegister::AH.overlaps(PhysicalRegister::AL));
+    // roots dont overlap
+    assert!(!PhysicalRegister::RAX.overlaps(PhysicalRegister::RBX));
+    // R8
+    assert!(PhysicalRegister::R8.overlaps(PhysicalRegister::R8D));
+    assert!(PhysicalRegister::R8W.overlaps(PhysicalRegister::R8B));
+}
