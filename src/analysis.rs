@@ -1,10 +1,78 @@
 use crate::ast::*;
+use std::fmt;
 
 /// diagnosis
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
     pub message: String,
     pub span: Option<Span>,
+}
+
+}
+
+impl fmt::Display for Diagnostic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.span {
+            Some(span) => write!(
+                f,
+                "{} (at position {}..{})",
+                self.message, span.start, span.end
+            ),
+            None => write!(f, "{}", self.message),
+        }
+    }
+}
+
+impl Diagnostic {
+    /// diag w new comment
+    pub fn new(message: impl Into<String>) -> Self {
+        Diagnostic {
+            message: message.into(),
+            span: None,
+        }
+    }
+
+    /// source span
+    pub fn with_span(mut self, span: Span) -> Self {
+        self.span = Some(span);
+        self
+    }
+
+    pub fn format_with_source(&self, source: &str) -> String {
+        match self.span {
+            Some(span) => {
+                let lines: Vec<&str> = source.lines().collect();
+                let mut char_count = 0;
+                let mut line_num = 0;
+                let mut line_start = 0;
+                
+                // what line is an error
+                for (i, line) in lines.iter().enumerate() {
+                    let line_len = line.len() + 1; 
+                    if char_count + line_len > span.start {
+                        line_num = i;
+                        line_start = char_count;
+                        break;
+                    }
+                    char_count += line_len;
+                }
+                
+                let line = lines.get(line_num).unwrap_or(&"");
+                let col = span.start - line_start;
+                
+                format!(
+                    "{}:{}:{}  {}\n{}\n{}^",
+                    line_num + 1,
+                    col + 1,
+                    span.end - span.start,
+                    self.message,
+                    line,
+                    " ".repeat(col)
+                )
+            }
+            None => self.message.clone(),
+        }
+    }
 }
 
 /// validates aliasis to prevent overriding
