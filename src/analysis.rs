@@ -467,25 +467,4 @@ mod tests {
         assert!(diagnostics[0].message.contains("In function 'main'"));
         assert!(diagnostics[0].message.contains("Unknown alias 'missing'"));
     }
-    
-    #[test]
-    fn program_analysis_reports_unknown_aliases() {
-        let program = Program {
-            functions: vec![FunctionDecl {
-                name: "main".into(),
-                params: Vec::new(),
-                body: ScopeBlock {
-                    statements: vec![Statement::Instruction(Instruction {
-                        mnemonic: Mnemonic("mov".into()),
-                        operands: vec![Operand::Register(Register::Alias("missing".into()))],
-                    })],
-                },
-            }],
-        };
-
-        let diagnostics = analyze_program(&program);
-        assert_eq!(diagnostics.len(), 1);
-        assert!(diagnostics[0].message.contains("In function 'main'"));
-        assert!(diagnostics[0].message.contains("Unknown alias 'missing'"));
-    }
 }
