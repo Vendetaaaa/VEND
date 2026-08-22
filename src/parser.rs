@@ -36,6 +36,8 @@ pub enum Token {
     Plus,
     Minus,
     Star,
+    Newline,
+    Semicolon,
     
     // comparsaions
     EqEq,      // ==
@@ -81,6 +83,8 @@ impl fmt::Display for Token {
             Token::Plus => write!(f, "'+'"),
             Token::Minus => write!(f, "'-'"),
             Token::Star => write!(f, "'*'"),
+            Token::Newline => write!(f, "newline"),
+            Token::Semicolon => write!(f, "';'"),
             Token::EqEq => write!(f, "'=='"),
             Token::NotEq => write!(f, "'!='"),
             Token::Lt => write!(f, "'<'"),
@@ -98,6 +102,7 @@ impl fmt::Display for Token {
 pub struct Lexer {
     input: Vec<char>,
     pos: usize,
+    byte_positions: Vec<usize>,
 }
 
 impl Lexer {
@@ -105,11 +110,12 @@ impl Lexer {
         Lexer {
             input: input.chars().collect(),
             pos: 0,
+            byte_positions: input.char_indices().map(|(index, _)| index).chain(std::iter::once(input.len())).collect(),
         }
     }
 
     fn current_pos(&self) -> usize {
-        self.pos
+        self.byte_positions[self.pos]
     }
 
     fn peek(&self) -> Option<char> {
@@ -139,9 +145,9 @@ impl Lexer {
         }
     }
 
-    fn skip_whitespace(&mut self) {
+    fn skip_horizontal_whitespace(&mut self) {
         while let Some(ch) = self.peek() {
-            if ch.is_whitespace() {
+            if ch == ' ' || ch == '\t' || ch == '\r' {
                 self.advance();
             } else {
                 break;
@@ -303,7 +309,7 @@ impl Lexer {
 
     pub fn next_token(&mut self) -> Token {
         loop {
-            self.skip_whitespace();
+            self.skip_horizontal_whitespace();
             if self.peek() == Some('/') && self.peek_ahead(1) == Some('/') {
                 self.skip_comment();
                 continue;
@@ -371,6 +377,14 @@ impl Lexer {
             Some('*') => {
                 self.advance();
                 Token::Star
+            }
+            Some(';') => {
+                self.advance();
+                Token::Semicolon
+            }
+            Some('\n') => {
+                self.advance();
+                Token::Newline
             }
             Some('!') => {
                 self.advance();
@@ -480,6 +494,7 @@ impl Parser {
     pub fn parse_program(&mut self) -> Result<Program, Vec<Diagnostic>> {
         let mut functions = Vec::new();
 
+        self.skip_separators();
         while self.current_token() != &Token::Eof {
             match self.parse_function() {
                 Ok(func) => functions.push(func),
@@ -492,6 +507,7 @@ impl Parser {
                     }
                 }
             }
+            self.skip_separators();
         }
 
         if self.diagnostics.is_empty() {
@@ -560,6 +576,7 @@ impl Parser {
     fn parse_scope_block(&mut self) -> Result<ScopeBlock, ()> {
         let mut statements = Vec::new();
 
+        self.skip_separators();
         while self.current_token() != &Token::RBrace && self.current_token() != &Token::Eof {
             match self.parse_statement() {
                 Ok(stmt) => statements.push(stmt),
@@ -573,9 +590,16 @@ impl Parser {
                     }
                 }
             }
+            self.skip_separators();
         }
 
         Ok(ScopeBlock { statements })
+    }
+
+    fn skip_separators(&mut self) {
+        while matches!(self.current_token(), Token::Newline | Token::Semicolon) {
+            self.advance();
+        }
     }
 
     fn is_statement_start(&self) -> bool {
@@ -999,3 +1023,4 @@ mod tests {
         assert!(result.is_ok());
     }
 }
+
