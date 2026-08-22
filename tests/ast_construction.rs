@@ -105,3 +105,34 @@ fn physical_register_overlap_is_detected() {
     assert!(PhysicalRegister::R8.overlaps(PhysicalRegister::R8D));
     assert!(PhysicalRegister::R8W.overlaps(PhysicalRegister::R8B));
 }
+
+#[test]
+fn every_physical_register_has_expected_root_and_range() {
+    let groups = [
+        (0, (0, 64), [PhysicalRegister::RAX, PhysicalRegister::EAX, PhysicalRegister::AX, PhysicalRegister::AL, PhysicalRegister::AH]),
+        (1, (0, 64), [PhysicalRegister::RBX, PhysicalRegister::EBX, PhysicalRegister::BX, PhysicalRegister::BL, PhysicalRegister::BH]),
+        (2, (0, 64), [PhysicalRegister::RCX, PhysicalRegister::ECX, PhysicalRegister::CX, PhysicalRegister::CL, PhysicalRegister::CH]),
+        (3, (0, 64), [PhysicalRegister::RDX, PhysicalRegister::EDX, PhysicalRegister::DX, PhysicalRegister::DL, PhysicalRegister::DH]),
+    ];
+
+    for (root, _, registers) in groups {
+        for register in registers {
+            assert_eq!(register.root_index(), root);
+        }
+    }
+
+    assert_eq!(PhysicalRegister::RAX.bit_range(), (0, 64));
+    assert_eq!(PhysicalRegister::EAX.bit_range(), (0, 32));
+    assert_eq!(PhysicalRegister::AX.bit_range(), (0, 16));
+    assert_eq!(PhysicalRegister::AL.bit_range(), (0, 8));
+    assert_eq!(PhysicalRegister::AH.bit_range(), (8, 8));
+    for register in [
+        PhysicalRegister::RSI, PhysicalRegister::RDI, PhysicalRegister::RBP,
+        PhysicalRegister::RSP, PhysicalRegister::R8, PhysicalRegister::R9,
+        PhysicalRegister::R10, PhysicalRegister::R11, PhysicalRegister::R12,
+        PhysicalRegister::R13, PhysicalRegister::R14, PhysicalRegister::R15,
+    ] {
+        assert_eq!(register.bit_range(), (0, 64));
+    }
+}
+
