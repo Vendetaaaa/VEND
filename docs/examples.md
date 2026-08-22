@@ -35,3 +35,12 @@ fn choose(flag) {
     }
 }
 ```
+
+### Both comma-sep & same-line whitespace-sep operands are accepted.
+
+```vend
+fn copy() {
+    mov RAX, RBX
+    mov RCX RDX; nop
+}
+```
