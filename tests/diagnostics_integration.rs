@@ -139,6 +139,12 @@ fn complex_error_program_with_multiple_issues() {
 }
 
 #[test]
+fn lexer_preserves_invalid_number_token() {
+    let mut lexer = vend_ast::Lexer::new("9223372036854775808");
+    assert!(matches!(lexer.next_token(), vend_ast::parser::Token::InvalidNumber(_)));
+}
+
+#[test]
 fn diagnostic_preserves_message_quality() {
     let input = "fn test() { mov RAX }";
     let result = parse(input);
