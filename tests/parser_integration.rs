@@ -426,3 +426,20 @@ fn parser_all_register_types() {
     let block = &prog.functions[0].body;
     assert_eq!(block.statements.len(), 4);
 }
+
+#[test]
+fn parser_uses_newline_and_semicolon_as_statement_boundaries() {
+    let input = "fn test() {\n mov RAX RBX\n mov RAX, RBX; nop\n }";
+    let program = parse(input).expect("separated instructions should parse");
+    assert_eq!(program.functions[0].body.statements.len(), 3);
+}
+
+#[test]
+fn parser_preserves_utf8_byte_offsets_in_diagnostics() {
+    let input = "fn tést() { @ }";
+    let diagnostics = parse(input).expect_err("invalid character should be diagnosed");
+    let at = input.find('@').expect("test marker should exist");
+    assert!(diagnostics.iter().any(|diagnostic| {
+        diagnostic.span.is_some_and(|span| span.start == at)
+    }));
+}
