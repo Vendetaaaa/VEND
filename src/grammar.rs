@@ -2,10 +2,10 @@ pub const VEND_GRAMMAR: &str = r#"
 Program       -> FunctionDecl*
 FunctionDecl  -> 'fn' Ident '(' ParamList? ')' '{' ScopeBlock '}'
 ParamList     -> Ident (',' Ident)*
-ScopeBlock    -> '{' Statement* '}'
+ScopeBlock    -> '{' (Newline | ';')* (Statement (Newline | ';')*)* '}'
 Statement     -> AliasDecl | Instruction | If | While | ScopeBlock
 AliasDecl     -> 'alias' Ident ':' RegType '=' PhysReg
-Instruction   -> Mnemonic Operand (',' Operand)?
+Instruction   -> Mnemonic Operand ((',' | SameLine) Operand)?
 If            -> 'if' Condition ScopeBlock ('else' ScopeBlock)?
 While         -> 'while' Condition ScopeBlock
 Condition     -> Operand CmpOp Operand
@@ -17,6 +17,8 @@ Base          -> Register
 Index         -> Register '*' UnsignedInteger
 Disp          -> SignedInteger
 RegType       -> 'reg64' | 'reg32' | 'reg16' | 'reg8'
+Newline       -> '\n'
+SameLine      -> Operand without an intervening Newline or ';'
 PhysReg       -> RAX | EAX | AX | AL | AH
               | RBX | EBX | BX | BL | BH
               | RCX | ECX | CX | CL | CH
