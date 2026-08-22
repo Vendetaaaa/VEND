@@ -2,7 +2,7 @@
 
 VEND is a register-aliased assembly language for low-level systems work.
 
-It keeps the machine-level feel of assembly, but adds lexical scopes, explicit register binding, strict operand widths, and structured control flow so the compiler can catch the mistakes that usually show up late.
+It keeps the machine-level feel of assembly, but adds lexical scopes, explicit register binding, register-width modeling, and structured control flow so the compiler can catch the mistakes that usually show up late.
 
 If you want the short version / segments:
 
@@ -14,14 +14,17 @@ If you want the short version / segments:
 
 ## Current Status
 
-This repository currently holds the stage 1 language model:
+Stages 1 through 4 are implemented:
 
 - AST types for programs, functions, blocks, instructions, operands, and control flow
 - the full x86_64-style physical register set used by the language model
 - register width types for `reg64`, `reg32`, `reg16`, and `reg8`
 - memory-address modeling for bracketed addressing expressions
 - a grammar reference string for the language surface
-- tests that build nested ASTs directly in memory
+- register-overlap validation for aliases
+- a lexer, recursive-descent parser, and source-pointing diagnostics
+- lexical scope metadata, alias lifetimes, use tracking, and visibility diagnostics
+- unit and integration tests for the complete foundation
 
 ## Install, build, run
 /
