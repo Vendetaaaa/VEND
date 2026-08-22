@@ -47,6 +47,11 @@ pub enum Token {
     
     // end of input
     Eof,
+
+	// invalid sc
+	Invalid(char),
+    InvalidNumber(String),
+	
 }
 
 impl fmt::Display for Token {
@@ -83,6 +88,8 @@ impl fmt::Display for Token {
             Token::LtEq => write!(f, "'<='"),
             Token::GtEq => write!(f, "'>='"),
             Token::Eof => write!(f, "end of input"),
+			Token::Invalid(ch) => write!(f, "invalid character '{}'", ch),
+            Token::InvalidNumber(value) => write!(f, "invalid integer '{}'", value),
         }
     }
 }
@@ -168,7 +175,7 @@ impl Lexer {
         result
     }
 
-    fn read_number(&mut self) -> i64 {
+    fn read_number(&mut self) -> Token {
         let mut result = String::new();
         let negative = if self.peek() == Some('-') {
             self.advance();
@@ -186,11 +193,15 @@ impl Lexer {
             }
         }
 
-        let num = result.parse::<i64>().unwrap_or(0);
-        if negative {
-            -num
+        let literal = if negative {
+            format!("-{}", result)
         } else {
-            num
+            result.clone()
+        };
+
+        match literal.parse::<i64>() {
+            Ok(num) => Token::Integer(num),
+            Err(_) => Token::InvalidNumber(literal),
         }
     }
 
@@ -352,7 +363,7 @@ impl Lexer {
                 if self.peek().map_or(false, |c| c.is_ascii_digit()) {
                     // neg nr
                     self.pos -= 1;
-                    Token::Integer(self.read_number())
+                    self.read_number()
                 } else {
                     Token::Minus
                 }
@@ -367,8 +378,7 @@ impl Lexer {
                     self.advance();
                     Token::NotEq
                 } else {
-                    // invalid is skip
-                    Token::Eof
+                    Token::Invalid('!')
                 }
             }
             Some('<') => {
@@ -389,15 +399,15 @@ impl Lexer {
                     Token::Gt
                 }
             }
-            Some(ch) if ch.is_ascii_digit() => Token::Integer(self.read_number()),
+            Some(ch) if ch.is_ascii_digit() => self.read_number(),
             Some(ch) if ch.is_alphabetic() || ch == '_' => {
                 let ident = self.read_ident();
                 self.ident_to_token(&ident)
             }
-            Some(_) => {
+            Some(ch) => {
                 // skip wierd
                 self.advance();
-                self.next_token()
+                Token::Invalid(ch)
             }
         }
     }
@@ -414,7 +424,6 @@ impl Parser {
     pub fn new(input: &str) -> Self {
         let mut lexer = Lexer::new(input);
         let mut tokens = Vec::new();
-        let mut char_pos = 0;
 
         loop {
             let start_pos = lexer.current_pos();
@@ -680,12 +689,13 @@ impl Parser {
 
         let mut operands = Vec::new();
 
-        // instr can have either 0/1/2
         if self.is_operand_start() {
             operands.push(self.parse_operand()?);
 
             if self.current_token() == &Token::Comma {
                 self.advance();
+                operands.push(self.parse_operand()?);
+            } else if self.is_operand_start() {
                 operands.push(self.parse_operand()?);
             }
         }
@@ -967,6 +977,19 @@ mod tests {
         let input = "fn test() { mov RAX RBX }";
         let result = parse(input);
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn parser_parses_comma_separated_operands() {
+        let input = "fn test() { mov RAX, RBX }";
+        let result = parse(input).expect("comma-separated operands should parse");
+        assert_eq!(result.functions[0].body.statements.len(), 1);
+    }
+
+    #[test]
+    fn lexer_reports_integer_overflow() {
+        let mut lexer = Lexer::new("9223372036854775808");
+        assert!(matches!(lexer.next_token(), Token::InvalidNumber(_)));
     }
 
     #[test]
