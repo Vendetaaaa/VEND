@@ -143,6 +143,11 @@ pub fn analyze_program(prog: &crate::ast::Program) -> Vec<Diagnostic> {
             let msg = format!("In function '{}': {}", func.name, d.message);
             diags.push(Diagnostic { message: msg, span: d.span });
         }
+        let mut liveness_diags = analyze_liveness(&func.body).diagnostics;
+        for d in liveness_diags.drain(..) {
+            let msg = format!("In function '{}': {}", func.name, d.message);
+            diags.push(Diagnostic { message: msg, span: d.span });
+        }
     }
     diags
 } 
