@@ -23,7 +23,7 @@ Track lexical register lifetimes and block boundaries.
 Check alias widths, register-to-register operand widths, condition widths, and
 the x86-64 memory-address register and scale forms represented by the AST.
 
-## Stage 6: Control-Flow Lowering [ ]
+## Stage 6: Control-Flow Lowering [x]
 
 Convert structured `if` and `while` constructs into deterministic low-level branches.
 
