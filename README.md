@@ -50,7 +50,3 @@ Stages 1 through 5 are implemented:
 ## License
 
 This project uses the MIT License. See [LICENSE](LICENSE).
-
-
-## Install, build, run
-/
