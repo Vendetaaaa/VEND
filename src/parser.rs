@@ -1,4 +1,5 @@
 use crate::ast::*;
+use crate::analysis::Diagnostic;
 use std::fmt;
 
 /// token by lexer
@@ -103,6 +104,7 @@ pub struct Lexer {
     input: Vec<char>,
     pos: usize,
     byte_positions: Vec<usize>,
+    last_token_start: usize,
 }
 
 impl Lexer {
@@ -111,6 +113,7 @@ impl Lexer {
             input: input.chars().collect(),
             pos: 0,
             byte_positions: input.char_indices().map(|(index, _)| index).chain(std::iter::once(input.len())).collect(),
+            last_token_start: 0,
         }
     }
 
@@ -317,6 +320,7 @@ impl Lexer {
             break;
         }
 
+        self.last_token_start = self.current_pos();
         match self.peek() {
             None => Token::Eof,
             Some('(') => {
@@ -440,8 +444,8 @@ impl Parser {
         let mut tokens = Vec::new();
 
         loop {
-            let start_pos = lexer.current_pos();
             let token = lexer.next_token();
+            let start_pos = lexer.last_token_start;
             if token == Token::Eof {
                 tokens.push((token, start_pos));
                 break;
@@ -458,6 +462,13 @@ impl Parser {
 
     fn current_token(&self) -> &Token {
         &self.tokens.get(self.pos).map(|(t, _)| t).unwrap_or(&Token::Eof)
+    }
+
+    fn peek_token(&self, offset: usize) -> &Token {
+        self.tokens
+            .get(self.pos + offset)
+            .map(|(t, _)| t)
+            .unwrap_or(&Token::Eof)
     }
 
     fn current_span(&self) -> usize {
@@ -724,6 +735,25 @@ impl Parser {
             }
         }
 
+        if matches!(
+            mnemonic.0.as_str(),
+            "mov" | "add" | "sub" | "xor" | "cmp" | "test"
+        ) && operands.len() != 2
+        {
+            let span = self.current_span();
+            self.diagnostics.push(Diagnostic {
+                message: format!(
+                    "Instruction '{}' expects exactly two operands",
+                    mnemonic.0
+                ),
+                span: Some(Span {
+                    start: span,
+                    end: span + 1,
+                }),
+            });
+            return Err(());
+        }
+
         Ok(Instruction { mnemonic, operands })
     }
 
@@ -793,12 +823,22 @@ impl Parser {
             None
         };
 
-        let index = if self.current_token() == &Token::Plus {
+        let index = if self.current_token() == &Token::Plus
+            && matches!(self.peek_token(1), Token::Ident(_) | Token::PhysReg(_))
+        {
             self.advance();
             if let Token::Ident(_) | Token::PhysReg(_) = self.current_token() {
                 let register = self.parse_register()?;
                 self.expect(Token::Star)?;
                 if let Token::Integer(scale) = self.current_token() {
+                    if !(1..=u8::MAX as i64).contains(scale) {
+                        let span = self.current_span();
+                        self.diagnostics.push(Diagnostic {
+                            message: "Expected a positive scale factor".to_string(),
+                            span: Some(Span { start: span, end: span + 1 }),
+                        });
+                        return Err(());
+                    }
                     let scale = *scale as u8;
                     self.advance();
                     Some(IndexedRegister { register, scale })
@@ -1023,4 +1063,3 @@ mod tests {
         assert!(result.is_ok());
     }
 }
-
