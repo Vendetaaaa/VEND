@@ -1,4 +1,5 @@
 use crate::ast::*;
+use std::collections::HashMap;
 use std::fmt;
 
 /// diagnosis
@@ -6,8 +7,6 @@ use std::fmt;
 pub struct Diagnostic {
     pub message: String,
     pub span: Option<Span>,
-}
-
 }
 
 impl fmt::Display for Diagnostic {
@@ -78,15 +77,15 @@ impl Diagnostic {
 /// validates aliasis to prevent overriding
 pub fn validate_aliases(block: &ScopeBlock) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
-    let mut active: Vec<&AliasDecl> = Vec::new();
+    let mut active: Vec<AliasDecl> = Vec::new();
 
-    fn walk(block: &ScopeBlock, active: &mut Vec<&AliasDecl>, diags: &mut Vec<Diagnostic>) {
+    fn walk(block: &ScopeBlock, active: &mut Vec<AliasDecl>, diags: &mut Vec<Diagnostic>) {
         for stmt in &block.statements {
             match stmt {
                 Statement::AliasDecl(a) => {
-                    for &other in active.iter() {
-                        // Allow shadows for aliases
-                        if a name == other.name {
+                    for other in active.iter() {
+                        // allowed
+                        if a.name == other.name {
                             continue;
                         }
                         if a.physical.overlaps(other.physical) {
@@ -101,7 +100,7 @@ pub fn validate_aliases(block: &ScopeBlock) -> Vec<Diagnostic> {
                             diags.push(Diagnostic { message: msg, span });
                         }
                     }
-                    active.push(a);
+                    active.push(a.clone());
                 }
                 Statement::ScopeBlock(s) => {
                     // new lexical block
@@ -143,6 +142,11 @@ pub fn analyze_program(prog: &crate::ast::Program) -> Vec<Diagnostic> {
             let msg = format!("In function '{}': {}", func.name, d.message);
             diags.push(Diagnostic { message: msg, span: d.span });
         }
+        let mut type_diags = validate_types(&func.body);
+        for d in type_diags.drain(..) {
+            let msg = format!("In function '{}': {}", func.name, d.message);
+            diags.push(Diagnostic { message: msg, span: d.span });
+        }
         let mut liveness_diags = analyze_liveness(&func.body).diagnostics;
         for d in liveness_diags.drain(..) {
             let msg = format!("In function '{}': {}", func.name, d.message);
@@ -150,7 +154,196 @@ pub fn analyze_program(prog: &crate::ast::Program) -> Vec<Diagnostic> {
         }
     }
     diags
-} 
+}
+
+/// vallidation for the ADI
+pub fn validate_types(block: &ScopeBlock) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+    let mut active = HashMap::new();
+    walk_types(block, &mut active, &mut diagnostics);
+    diagnostics
+}
+
+/// type check for every run
+pub fn analyze_program_types(prog: &crate::ast::Program) -> Vec<Vec<Diagnostic>> {
+    prog.functions
+        .iter()
+        .map(|function| validate_types(&function.body))
+        .collect()
+}
+
+fn walk_types(
+    block: &ScopeBlock,
+    active: &mut HashMap<String, Vec<RegisterWidth>>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let mut declared_names = Vec::new();
+
+    for statement in &block.statements {
+        match statement {
+            Statement::AliasDecl(alias) => {
+                if alias.width != alias.physical.width() {
+                    diagnostics.push(Diagnostic {
+                        message: format!(
+                            "Alias '{}' declares {} but physical register {} is {}",
+                            alias.name,
+                            alias.width,
+                            alias.physical,
+                            alias.physical.width()
+                        ),
+                        span: alias.span,
+                    });
+                }
+                active
+                    .entry(alias.name.clone())
+                    .or_default()
+                    .push(alias.width);
+                declared_names.push(alias.name.clone());
+            }
+            Statement::Instruction(instruction) => {
+                for operand in &instruction.operands {
+                    validate_operand_types(operand, active, diagnostics);
+                }
+                validate_instruction_types(instruction, active, diagnostics);
+            }
+            Statement::If(if_statement) => {
+                validate_operand_types(&if_statement.condition.left, active, diagnostics);
+                validate_operand_types(&if_statement.condition.right, active, diagnostics);
+                validate_condition_types(&if_statement.condition, active, diagnostics);
+                walk_types(&if_statement.then_block, active, diagnostics);
+                if let Some(else_block) = &if_statement.else_block {
+                    walk_types(else_block, active, diagnostics);
+                }
+            }
+            Statement::While(while_statement) => {
+                validate_operand_types(&while_statement.condition.left, active, diagnostics);
+                validate_operand_types(&while_statement.condition.right, active, diagnostics);
+                validate_condition_types(&while_statement.condition, active, diagnostics);
+                walk_types(&while_statement.body, active, diagnostics);
+            }
+            Statement::ScopeBlock(nested) => walk_types(nested, active, diagnostics),
+        }
+    }
+
+    for name in declared_names.into_iter().rev() {
+        let widths = active
+            .get_mut(&name)
+            .expect("type scope must contain its declared alias");
+        widths.pop();
+        if widths.is_empty() {
+            active.remove(&name);
+        }
+    }
+}
+
+fn validate_operand_types(
+    operand: &Operand,
+    active: &HashMap<String, Vec<RegisterWidth>>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let Operand::MemoryAddress(address) = operand else {
+        return;
+    };
+
+    for register in address
+        .base
+        .iter()
+        .chain(address.index.iter().map(|index| &index.register))
+    {
+        if register_width(register, active) != Some(RegisterWidth::Reg64) {
+            diagnostics.push(Diagnostic::new(
+                "Memory address registers must have reg64 width",
+            ));
+        }
+    }
+
+    if let Some(index) = &address.index {
+        if !matches!(index.scale, 1 | 2 | 4 | 8) {
+            diagnostics.push(Diagnostic::new(format!(
+                "Memory index scale must be 1, 2, 4, or 8, found {}",
+                index.scale
+            )));
+        }
+    }
+}
+
+fn register_width(
+    register: &Register,
+    active: &HashMap<String, Vec<RegisterWidth>>,
+) -> Option<RegisterWidth> {
+    match register {
+        Register::Physical(physical) => Some(physical.width()),
+        Register::Alias(name) => active
+            .get(name)
+            .and_then(|widths| widths.last().copied()),
+    }
+}
+
+fn validate_instruction_types(
+    instruction: &Instruction,
+    active: &HashMap<String, Vec<RegisterWidth>>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let Some(mnemonic) = supported_width_checked_mnemonic(&instruction.mnemonic.0) else {
+        return;
+    };
+
+    if instruction.operands.len() < 2 {
+        return;
+    }
+
+    let (Operand::Register(left), Operand::Register(right)) =
+        (&instruction.operands[0], &instruction.operands[1])
+    else {
+        return;
+    };
+
+    let (Some(left_width), Some(right_width)) = (
+        register_width(left, active),
+        register_width(right, active),
+    ) else {
+        return;
+    };
+
+    if left_width != right_width {
+        diagnostics.push(Diagnostic::new(format!(
+            "Instruction '{}' requires matching register widths, found {} and {}",
+            mnemonic, left_width, right_width
+        )));
+    }
+}
+
+fn supported_width_checked_mnemonic(mnemonic: &str) -> Option<&str> {
+    match mnemonic {
+        "mov" | "add" | "sub" | "xor" | "cmp" | "test" => Some(mnemonic),
+        _ => None,
+    }
+}
+
+fn validate_condition_types(
+    condition: &Condition,
+    active: &HashMap<String, Vec<RegisterWidth>>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let (Operand::Register(left), Operand::Register(right)) = (&condition.left, &condition.right)
+    else {
+        return;
+    };
+
+    let (Some(left_width), Some(right_width)) = (
+        register_width(left, active),
+        register_width(right, active),
+    ) else {
+        return;
+    };
+
+    if left_width != right_width {
+        diagnostics.push(Diagnostic::new(format!(
+            "Condition requires matching register widths, found {} and {}",
+            left_width, right_width
+        )));
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScopeInfo {
@@ -178,18 +371,13 @@ pub struct LivenessReport {
     pub diagnostics: Vec<Diagnostic>,
 }
 
-struct ActiveAlias {
-    name: Ident,
-    lifetime: usize,
-}
-
 pub fn analyze_liveness(block: &ScopeBlock) -> LivenessReport {
     let mut report = LivenessReport {
         scopes: Vec::new(),
         aliases: Vec::new(),
         diagnostics: Vec::new(),
     };
-    let mut active = Vec::new();
+    let mut active = HashMap::new();
     walk_liveness(block, None, 0, &mut active, &mut report);
     report
 }
@@ -205,7 +393,7 @@ fn walk_liveness(
     block: &ScopeBlock,
     parent: Option<usize>,
     depth: usize,
-    active: &mut Vec<ActiveAlias>,
+    active: &mut HashMap<String, Vec<usize>>,
     report: &mut LivenessReport,
 ) {
     let scope_id = report.scopes.len();
@@ -216,7 +404,7 @@ fn walk_liveness(
         statement_count: block.statements.len(),
     });
 
-    let active_before = active.len();
+    let mut declared_names = Vec::new();
     for (statement_index, statement) in block.statements.iter().enumerate() {
         match statement {
             Statement::AliasDecl(alias) => {
@@ -230,10 +418,11 @@ fn walk_liveness(
                     end_index: block.statements.len(),
                     uses: Vec::new(),
                 });
-                active.push(ActiveAlias {
-                    name: alias.name.clone(),
-                    lifetime,
-                });
+                active
+                    .entry(alias.name.clone())
+                    .or_default()
+                    .push(lifetime);
+                declared_names.push(alias.name.clone());
             }
             Statement::Instruction(instruction) => {
                 for operand in &instruction.operands {
@@ -270,13 +459,21 @@ fn walk_liveness(
             }
         }
     }
-    active.truncate(active_before);
+    for name in declared_names.into_iter().rev() {
+        let lifetimes = active
+            .get_mut(&name)
+            .expect("liveness scope must contain its declared alias");
+        lifetimes.pop();
+        if lifetimes.is_empty() {
+            active.remove(&name);
+        }
+    }
 }
 
 fn record_operand_use(
     operand: &Operand,
     statement_index: usize,
-    active: &[ActiveAlias],
+    active: &HashMap<String, Vec<usize>>,
     report: &mut LivenessReport,
 ) {
     match operand {
@@ -296,7 +493,7 @@ fn record_operand_use(
 fn record_register_use(
     register: &Register,
     statement_index: usize,
-    active: &[ActiveAlias],
+    active: &HashMap<String, Vec<usize>>,
     report: &mut LivenessReport,
 ) {
     if let Register::Alias(name) = register {
@@ -307,11 +504,14 @@ fn record_register_use(
 fn record_alias_use(
     name: &str,
     statement_index: usize,
-    active: &[ActiveAlias],
+    active: &HashMap<String, Vec<usize>>,
     report: &mut LivenessReport,
 ) {
-    if let Some(alias) = active.iter().rev().find(|alias| alias.name == name) {
-        report.aliases[alias.lifetime].uses.push(statement_index);
+    if let Some(lifetimes) = active.get(name) {
+        let lifetime = *lifetimes
+            .last()
+            .expect("alias stack must contain an active lifetime");
+        report.aliases[lifetime].uses.push(statement_index);
     } else {
         report.diagnostics.push(Diagnostic::new(format!(
             "Unknown alias '{}' used in statement {}",
@@ -372,6 +572,81 @@ mod tests {
 
         let diags = validate_aliases(&block);
         assert!(diags.is_empty(), "expected no conflicts");
+    }
+
+    #[test]
+    fn detects_alias_width_mismatch() {
+        let block = ScopeBlock {
+            statements: vec![Statement::AliasDecl(AliasDecl {
+                name: "value".into(),
+                width: RegisterWidth::Reg64,
+                physical: PhysicalRegister::EAX,
+                span: None,
+            })],
+        };
+
+        let diags = validate_types(&block);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("declares reg64"));
+    }
+
+    #[test]
+    fn detects_register_width_mismatch_in_instruction() {
+        let block = ScopeBlock {
+            statements: vec![Statement::Instruction(Instruction {
+                mnemonic: Mnemonic("mov".into()),
+                operands: vec![
+                    Operand::Register(Register::Physical(PhysicalRegister::RAX)),
+                    Operand::Register(Register::Physical(PhysicalRegister::EBX)),
+                ],
+            })],
+        };
+
+        let diags = validate_types(&block);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("matching register widths"));
+    }
+
+    #[test]
+    fn detects_invalid_memory_register_width_and_scale() {
+        let block = ScopeBlock {
+            statements: vec![Statement::Instruction(Instruction {
+                mnemonic: Mnemonic("mov".into()),
+                operands: vec![
+                    Operand::Register(Register::Physical(PhysicalRegister::RAX)),
+                    Operand::MemoryAddress(MemoryAddress {
+                        base: Some(Register::Physical(PhysicalRegister::EAX)),
+                        index: Some(IndexedRegister {
+                            register: Register::Physical(PhysicalRegister::RBX),
+                            scale: 3,
+                        }),
+                        displacement: 0,
+                    }),
+                ],
+            })],
+        };
+
+        let diags = validate_types(&block);
+        assert_eq!(diags.len(), 2);
+        assert!(diags[0].message.contains("reg64 width"));
+        assert!(diags[1].message.contains("scale"));
+    }
+
+    #[test]
+    fn allows_matching_register_widths_in_conditions() {
+        let block = ScopeBlock {
+            statements: vec![Statement::If(If {
+                condition: Condition {
+                    left: Operand::Register(Register::Physical(PhysicalRegister::EAX)),
+                    op: ComparisonOp::Eq,
+                    right: Operand::Register(Register::Physical(PhysicalRegister::EBX)),
+                },
+                then_block: ScopeBlock { statements: vec![] },
+                else_block: None,
+            })],
+        };
+
+        assert!(validate_types(&block).is_empty());
     }
 
     #[test]
