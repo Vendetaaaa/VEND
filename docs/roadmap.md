@@ -18,9 +18,10 @@ Parse source files and report errors in a way that points directly to the proble
 
 Track lexical register lifetimes and block boundaries.
 
-## Stage 5: Type Checking [ ]
+## Stage 5: Type Checking [x]
 
-Check operand widths, memory forms, and instruction constraints.
+Check alias widths, register-to-register operand widths, condition widths, and
+the x86-64 memory-address register and scale forms represented by the AST.
 
 ## Stage 6: Control-Flow Lowering [ ]
 
