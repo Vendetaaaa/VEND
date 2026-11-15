@@ -54,7 +54,3 @@ This project uses the MIT License. See [LICENSE](LICENSE).
 
 ## Install, build, run
 /
-
-## License
-
-This project uses the MIT License. See [LICENSE](LICENSE).
