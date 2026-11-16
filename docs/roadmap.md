@@ -27,7 +27,7 @@ the x86-64 memory-address register and scale forms represented by the AST.
 
 Convert structured `if` and `while` constructs into deterministic low-level branches.
 
-## Stage 7: Assembly Emission [ ]
+## Stage 7: Assembly Emission [x]
 
 Emit valid x86_64 assembly for supported toolchains.
 
