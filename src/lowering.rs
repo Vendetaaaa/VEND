@@ -1,17 +1,22 @@
 use crate::ast::{
-    ComparisonOp, Condition, FunctionDecl, Instruction, Operand, Program, ScopeBlock, Statement,
+    ComparisonOp, Condition, FunctionDecl, Instruction, Operand, PhysicalRegister, Program,
+    Register, ScopeBlock, Statement,
 };
+use std::collections::HashMap;
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoweredProgram {
     pub functions: Vec<LoweredFunction>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct LoweredFunction {
     pub name: String,
     pub params: Vec<String>,
     pub instructions: Vec<LoweredInstruction>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LoweredInstruction {
     Label(String),
     Instruction(Instruction),
@@ -38,6 +43,7 @@ pub fn lower_function(function: &FunctionDecl) -> LoweredFunction {
     let mut context = LoweringContext {
         next_label: 0,
         instructions: Vec::new(),
+        aliases: HashMap::new(),
     };
     context.lower_block(&function.body);
 
@@ -51,6 +57,7 @@ pub fn lower_function(function: &FunctionDecl) -> LoweredFunction {
 struct LoweringContext {
     next_label: usize,
     instructions: Vec<LoweredInstruction>,
+    aliases: HashMap<String, Vec<PhysicalRegister>>,
 }
 
 impl LoweringContext {
@@ -61,23 +68,96 @@ impl LoweringContext {
     }
 
     fn lower_block(&mut self, block: &ScopeBlock) {
+        let mut declared_aliases = Vec::new();
         for statement in &block.statements {
             match statement {
-                Statement::AliasDecl(_) => {}
+                Statement::AliasDecl(alias) => {
+                    self.aliases
+                        .entry(alias.name.clone())
+                        .or_default()
+                        .push(alias.physical);
+                    declared_aliases.push(alias.name.clone());
+                }
                 Statement::Instruction(instruction) => {
-                    self.instructions
-                        .push(LoweredInstruction::Instruction(instruction.clone()));
+                    self.instructions.push(LoweredInstruction::Instruction(
+                        self.resolve_instruction(instruction),
+                    ));
                 }
                 Statement::ScopeBlock(nested) => self.lower_block(nested),
                 Statement::If(if_statement) => self.lower_if(
-                    &if_statement.condition,
+                    &self.resolve_condition(&if_statement.condition),
                     &if_statement.then_block,
                     if_statement.else_block.as_ref(),
                 ),
                 Statement::While(while_statement) => {
-                    self.lower_while(&while_statement.condition, &while_statement.body)
+                    let condition = self.resolve_condition(&while_statement.condition);
+                    self.lower_while(&condition, &while_statement.body)
                 }
             }
+        }
+        for name in declared_aliases.into_iter().rev() {
+            let aliases = self
+                .aliases
+                .get_mut(&name)
+                .expect("lowering scope must contain its declared alias");
+            aliases.pop();
+            if aliases.is_empty() {
+                self.aliases.remove(&name);
+            }
+        }
+    }
+
+    fn resolve_instruction(&self, instruction: &Instruction) -> Instruction {
+        Instruction {
+            mnemonic: instruction.mnemonic.clone(),
+            operands: instruction
+                .operands
+                .iter()
+                .map(|operand| self.resolve_operand(operand))
+                .collect(),
+        }
+    }
+
+    fn resolve_condition(&self, condition: &Condition) -> Condition {
+        Condition {
+            left: self.resolve_operand(&condition.left),
+            op: condition.op,
+            right: self.resolve_operand(&condition.right),
+        }
+    }
+
+    fn resolve_operand(&self, operand: &Operand) -> Operand {
+        match operand {
+            Operand::Register(Register::Alias(name)) => self
+                .aliases
+                .get(name)
+                .and_then(|registers| registers.last().copied())
+                .map(Register::Physical)
+                .map(Operand::Register)
+                .unwrap_or_else(|| operand.clone()),
+            Operand::MemoryAddress(address) => {
+                let mut address = address.clone();
+                address.base = address
+                    .base
+                    .as_ref()
+                    .map(|register| self.resolve_register(register));
+                address.index = address
+                    .index
+                    .as_ref()
+                    .map(|index| crate::ast::IndexedRegister {
+                        register: self.resolve_register(&index.register),
+                        scale: index.scale,
+                    });
+                Operand::MemoryAddress(address)
+            }
+            _ => operand.clone(),
+        }
+    }
+
+    fn resolve_register(&self, register: &Register) -> Register {
+        match self.resolve_operand(&Operand::Register(register.clone())) {
+            Operand::Register(register) => register,
+            _ => unreachable!("register resolution must return a register"),
         }
     }
 
