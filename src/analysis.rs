@@ -486,7 +486,9 @@ fn record_operand_use(
                 record_register_use(&index.register, statement_index, active, report);
             }
         }
-        Operand::Register(Register::Physical(_)) | Operand::Immediate(_) => {}
+         Operand::Register(Register::Physical(_))
+        | Operand::Immediate(_)
+        | Operand::Symbol(_) => {}
     }
 }
 
