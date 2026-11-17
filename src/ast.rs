@@ -59,11 +59,12 @@ pub struct Instruction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mnemonic(pub Ident);
 
-// the big 3 dawgs
+// the big 4 dawgs
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Operand {
     Register(Register),
     Immediate(i64),
+    Symbol(Ident),
     MemoryAddress(MemoryAddress),
 }
 
