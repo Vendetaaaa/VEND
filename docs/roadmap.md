@@ -31,9 +31,10 @@ Convert structured `if` and `while` constructs into deterministic low-level bran
 
 Emit valid x86_64 assembly for supported toolchains.
 
-## Stage 8: ABI Boundaries [ ]
+## Stage 8: ABI Boundaries [x]
 
-Handle calls into external code and system interfaces cleanly.
+Support external call symbols and expose the System V and Windows x64 register,
+stack-alignment, shadow-space, return-register, and caller-saved rules.
 
 ## Stage 9: Unsafe Idioms [ ]
 
