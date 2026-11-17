@@ -91,6 +91,10 @@ fn write_operand(operand: &Operand, output: &mut String) -> Result<(), EmissionE
             write!(output, "{}", value).unwrap();
             Ok(())
         }
+        Operand::Symbol(name) => {
+            output.push_str(name);
+            Ok(())
+        }
         Operand::MemoryAddress(address) => write_memory_address(address, output),
     }
 }
