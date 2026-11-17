@@ -30,7 +30,7 @@ If you want the short version / segments:
 
 ## Current Status
 
-Stages 1 through 7 are implemented:
+Stages 1 through 8 are implemented:
 
 - AST types for programs, functions, blocks, instructions, operands, and control flow
 - the full x86_64-style physical register set used by the language model
@@ -43,6 +43,8 @@ Stages 1 through 7 are implemented:
 - register-width validation for aliases, register-to-register instructions, and conditions
 - memory-address validation for 64-bit base/index registers and legal index scales
 - Intel-syntax x86-64 assembly emission for lowered programs
+- ABI metadata for System V and Windows x64 external calls
+- external call-symbol emission and ABI call-shape diagnostics
 - unit and integration tests for the complete foundation
 
 ## Install, build, run
