@@ -725,7 +725,17 @@ impl Parser {
         let mut operands = Vec::new();
 
         if self.is_operand_start() {
-            operands.push(self.parse_operand()?);
+            if mnemonic.0 == "call" {
+                if let Token::Ident(name) = self.current_token() {
+                    let name = name.clone();
+                    self.advance();
+                    operands.push(Operand::Symbol(name));
+                } else {
+                    operands.push(self.parse_operand()?);
+                }
+            } else {
+                operands.push(self.parse_operand()?);
+            }
 
             if self.current_token() == &Token::Comma {
                 self.advance();
