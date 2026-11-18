@@ -44,10 +44,10 @@ impl Diagnostic {
                 let mut char_count = 0;
                 let mut line_num = 0;
                 let mut line_start = 0;
-                
+
                 // what line is an error
                 for (i, line) in lines.iter().enumerate() {
-                    let line_len = line.len() + 1; 
+                    let line_len = line.len() + 1;
                     if char_count + line_len > span.start {
                         line_num = i;
                         line_start = char_count;
@@ -55,10 +55,10 @@ impl Diagnostic {
                     }
                     char_count += line_len;
                 }
-                
+
                 let line = lines.get(line_num).unwrap_or(&"");
                 let col = span.start - line_start;
-                
+
                 format!(
                     "{}:{}:{}  {}\n{}\n{}^",
                     line_num + 1,
@@ -91,10 +91,7 @@ pub fn validate_aliases(block: &ScopeBlock) -> Vec<Diagnostic> {
                         if a.physical.overlaps(other.physical) {
                             let msg = format!(
                                 "Alias conflict: '{}' ({}) overlaps '{}' ({})",
-                                a.name,
-                                a.physical,
-                                other.name,
-                                other.physical
+                                a.name, a.physical, other.name, other.physical
                             );
                             let span = a.span.or(other.span);
                             diags.push(Diagnostic { message: msg, span });
@@ -104,6 +101,11 @@ pub fn validate_aliases(block: &ScopeBlock) -> Vec<Diagnostic> {
                 }
                 Statement::ScopeBlock(s) => {
                     // new lexical block
+                    let before = active.len();
+                    walk(s, active, diags);
+                    active.truncate(before);
+                }
+                Statement::Unsafe(s) => {
                     let before = active.len();
                     walk(s, active, diags);
                     active.truncate(before);
@@ -140,17 +142,26 @@ pub fn analyze_program(prog: &crate::ast::Program) -> Vec<Diagnostic> {
         let mut func_diags = validate_aliases(&func.body);
         for d in func_diags.drain(..) {
             let msg = format!("In function '{}': {}", func.name, d.message);
-            diags.push(Diagnostic { message: msg, span: d.span });
+            diags.push(Diagnostic {
+                message: msg,
+                span: d.span,
+            });
         }
         let mut type_diags = validate_types(&func.body);
         for d in type_diags.drain(..) {
             let msg = format!("In function '{}': {}", func.name, d.message);
-            diags.push(Diagnostic { message: msg, span: d.span });
+            diags.push(Diagnostic {
+                message: msg,
+                span: d.span,
+            });
         }
         let mut liveness_diags = analyze_liveness(&func.body).diagnostics;
         for d in liveness_diags.drain(..) {
             let msg = format!("In function '{}': {}", func.name, d.message);
-            diags.push(Diagnostic { message: msg, span: d.span });
+            diags.push(Diagnostic {
+                message: msg,
+                span: d.span,
+            });
         }
     }
     diags
@@ -222,6 +233,7 @@ fn walk_types(
                 walk_types(&while_statement.body, active, diagnostics);
             }
             Statement::ScopeBlock(nested) => walk_types(nested, active, diagnostics),
+            Statement::Unsafe(nested) => walk_types(nested, active, diagnostics),
         }
     }
 
@@ -273,9 +285,7 @@ fn register_width(
 ) -> Option<RegisterWidth> {
     match register {
         Register::Physical(physical) => Some(physical.width()),
-        Register::Alias(name) => active
-            .get(name)
-            .and_then(|widths| widths.last().copied()),
+        Register::Alias(name) => active.get(name).and_then(|widths| widths.last().copied()),
     }
 }
 
@@ -298,10 +308,9 @@ fn validate_instruction_types(
         return;
     };
 
-    let (Some(left_width), Some(right_width)) = (
-        register_width(left, active),
-        register_width(right, active),
-    ) else {
+    let (Some(left_width), Some(right_width)) =
+        (register_width(left, active), register_width(right, active))
+    else {
         return;
     };
 
@@ -330,10 +339,9 @@ fn validate_condition_types(
         return;
     };
 
-    let (Some(left_width), Some(right_width)) = (
-        register_width(left, active),
-        register_width(right, active),
-    ) else {
+    let (Some(left_width), Some(right_width)) =
+        (register_width(left, active), register_width(right, active))
+    else {
         return;
     };
 
@@ -418,10 +426,7 @@ fn walk_liveness(
                     end_index: block.statements.len(),
                     uses: Vec::new(),
                 });
-                active
-                    .entry(alias.name.clone())
-                    .or_default()
-                    .push(lifetime);
+                active.entry(alias.name.clone()).or_default().push(lifetime);
                 declared_names.push(alias.name.clone());
             }
             Statement::Instruction(instruction) => {
@@ -430,8 +435,18 @@ fn walk_liveness(
                 }
             }
             Statement::If(if_statement) => {
-                record_operand_use(&if_statement.condition.left, statement_index, active, report);
-                record_operand_use(&if_statement.condition.right, statement_index, active, report);
+                record_operand_use(
+                    &if_statement.condition.left,
+                    statement_index,
+                    active,
+                    report,
+                );
+                record_operand_use(
+                    &if_statement.condition.right,
+                    statement_index,
+                    active,
+                    report,
+                );
                 walk_liveness(
                     &if_statement.then_block,
                     Some(scope_id),
@@ -444,8 +459,18 @@ fn walk_liveness(
                 }
             }
             Statement::While(while_statement) => {
-                record_operand_use(&while_statement.condition.left, statement_index, active, report);
-                record_operand_use(&while_statement.condition.right, statement_index, active, report);
+                record_operand_use(
+                    &while_statement.condition.left,
+                    statement_index,
+                    active,
+                    report,
+                );
+                record_operand_use(
+                    &while_statement.condition.right,
+                    statement_index,
+                    active,
+                    report,
+                );
                 walk_liveness(
                     &while_statement.body,
                     Some(scope_id),
@@ -455,6 +480,9 @@ fn walk_liveness(
                 );
             }
             Statement::ScopeBlock(nested) => {
+                walk_liveness(nested, Some(scope_id), depth + 1, active, report);
+            }
+            Statement::Unsafe(nested) => {
                 walk_liveness(nested, Some(scope_id), depth + 1, active, report);
             }
         }
@@ -477,7 +505,9 @@ fn record_operand_use(
     report: &mut LivenessReport,
 ) {
     match operand {
-        Operand::Register(Register::Alias(name)) => record_alias_use(name, statement_index, active, report),
+        Operand::Register(Register::Alias(name)) => {
+            record_alias_use(name, statement_index, active, report)
+        }
         Operand::MemoryAddress(address) => {
             if let Some(base) = &address.base {
                 record_register_use(base, statement_index, active, report);
@@ -486,9 +516,7 @@ fn record_operand_use(
                 record_register_use(&index.register, statement_index, active, report);
             }
         }
-         Operand::Register(Register::Physical(_))
-        | Operand::Immediate(_)
-        | Operand::Symbol(_) => {}
+        Operand::Register(Register::Physical(_)) | Operand::Immediate(_) | Operand::Symbol(_) => {}
     }
 }
 
@@ -672,14 +700,19 @@ mod tests {
         };
 
         let block = ScopeBlock {
-            statements: vec![Statement::AliasDecl(parent), Statement::ScopeBlock(child_block)],
+            statements: vec![
+                Statement::AliasDecl(parent),
+                Statement::ScopeBlock(child_block),
+            ],
         };
 
         let diags = validate_aliases(&block);
-        assert!(!diags.is_empty(), "expected conflict between parent and child alias");
+        assert!(
+            !diags.is_empty(),
+            "expected conflict between parent and child alias"
+        );
     }
 
-    
     #[test]
     fn tracks_alias_lifetimes_and_nested_scope_visibility() {
         let block = ScopeBlock {
@@ -721,7 +754,9 @@ mod tests {
         assert_eq!(report.aliases[1].scope_id, 1);
         assert!(report.aliases[1].uses.is_empty());
         assert_eq!(report.diagnostics.len(), 1);
-        assert!(report.diagnostics[0].message.contains("Unknown alias 'child'"));
+        assert!(report.diagnostics[0]
+            .message
+            .contains("Unknown alias 'child'"));
     }
 
     #[test]
