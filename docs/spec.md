@@ -22,6 +22,7 @@ fn main(argc, argv) {
 - instructions use a mnemonic and one or more operands.
 - `if` and `while` are structured control-flow nodes.
 - Statements may be separated by a newline or `;`.
+- `unsafe { ... }` explicitly delimits hand-tuned instructions that bypass higher-level intent checks while preserving normal alias and ABI traversal.
 - `mov RAX RBX` and `mov RAX, RBX` are equivalent.
 
 ## Registers
