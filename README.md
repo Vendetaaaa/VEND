@@ -45,10 +45,16 @@ Stages 1 through 8 are implemented:
 - Intel-syntax x86-64 assembly emission for lowered programs
 - ABI metadata for System V and Windows x64 external calls
 - external call-symbol emission and ABI call-shape diagnostics
+- explicit `unsafe { ... }` blocks for hand-tuned instructions
+- a `vend` CLI for compiling source files to assembly
 - unit and integration tests for the complete foundation
 
 ## Install, build, run
-/
+
+```text
+cargo run --bin vend -- program.vend -o program.s
+cargo run --bin vend -- program.vend --abi windows
+```
 
 ## License
 
