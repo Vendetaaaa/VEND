@@ -36,10 +36,12 @@ Emit valid x86_64 assembly for supported toolchains.
 Support external call symbols and expose the System V and Windows x64 register,
 stack-alignment, shadow-space, return-register, and caller-saved rules.
 
-## Stage 9: Unsafe Idioms [ ]
+## Stage 9: Unsafe Idioms [x]
 
-Allow controlled escape hatches for hand-tuned low-level patterns.
+Support explicit `unsafe { ... }` blocks for hand-tuned low-level patterns.
 
-## Stage 10: CLI and Tooling [ ]
+## Stage 10: CLI and Tooling [x]
 
-Add a command-line interface, integration tests, and benchmarking.
+The `vend` command-line binary parses and validates a source file, lowers
+structured control flow, and emits Intel-syntax x86-64 assembly. It supports
+`--abi systemv|windows` and `-o/--output`.
