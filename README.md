@@ -30,7 +30,7 @@ If you want the short version / segments:
 
 ## Current Status
 
-Stages 1 through 8 are implemented:
+Stages 1 through 10 are implemented:
 
 - AST types for programs, functions, blocks, instructions, operands, and control flow
 - the full x86_64-style physical register set used by the language model
