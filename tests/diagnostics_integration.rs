@@ -39,7 +39,7 @@ fn diagnostic_multiple_errors_accumulated() {
     let result = parse(input);
     assert!(result.is_err());
     let diags = result.unwrap_err();
-    assert!(diags.len() > 0);
+    assert!(!diags.is_empty());
 }
 
 #[test]
@@ -135,13 +135,16 @@ fn complex_error_program_with_multiple_issues() {
     let result = parse(input);
     assert!(result.is_err());
     let diags = result.unwrap_err();
-    assert!(diags.len() > 0);
+    assert!(!diags.is_empty());
 }
 
 #[test]
 fn lexer_preserves_invalid_number_token() {
     let mut lexer = vend_ast::Lexer::new("9223372036854775808");
-    assert!(matches!(lexer.next_token(), vend_ast::parser::Token::InvalidNumber(_)));
+    assert!(matches!(
+        lexer.next_token(),
+        vend_ast::parser::Token::InvalidNumber(_)
+    ));
 }
 
 #[test]
