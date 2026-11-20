@@ -3,7 +3,7 @@ use std::fs;
 use std::io::{self, Write};
 use std::process::ExitCode;
 
-use vend_ast::{analyze_program, emit_program, lower_program, parse, validate_abi, Abi};
+use vend_ast::Abi;
 
 struct Options {
     input: String,
@@ -57,37 +57,13 @@ fn parse_options(args: impl Iterator<Item = String>) -> Result<Options, String> 
 fn compile(options: Options) -> Result<String, String> {
     let source = fs::read_to_string(&options.input)
         .map_err(|error| format!("cannot read '{}': {}", options.input, error))?;
-    let program = parse(&source).map_err(|diagnostics| {
+    vend_ast::compile(&source, options.abi).map_err(|diagnostics| {
         diagnostics
             .iter()
             .map(|diagnostic| diagnostic.format_with_source(&source))
             .collect::<Vec<_>>()
             .join("\n")
-    })?;
-
-    let diagnostics = analyze_program(&program);
-    if !diagnostics.is_empty() {
-        return Err(diagnostics
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join("\n"));
-    }
-
-    let abi_diagnostics = program
-        .functions
-        .iter()
-        .flat_map(|function| validate_abi(function, options.abi))
-        .collect::<Vec<_>>();
-    if !abi_diagnostics.is_empty() {
-        return Err(abi_diagnostics
-            .iter()
-            .map(ToString::to_string)
-            .collect::<Vec<_>>()
-            .join("\n"));
-    }
-
-    emit_program(&lower_program(&program)).map_err(|error| error.to_string())
+    })
 }
 
 fn run() -> Result<(), String> {
