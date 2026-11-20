@@ -2,20 +2,17 @@ use std::fmt;
 
 pub type Ident = String;
 
-// parser will populate soon
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Span {
     pub start: usize,
     pub end: usize,
 }
 
-// atm just a list off functions
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Program {
     pub functions: Vec<FunctionDecl>,
 }
 
-// functions are one level and one pm
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionDecl {
     pub name: Ident,
@@ -23,13 +20,11 @@ pub struct FunctionDecl {
     pub body: ScopeBlock,
 }
 
-// scope block are keys for alias
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ScopeBlock {
     pub statements: Vec<Statement>,
 }
 
-// sts are explicit
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Statement {
     AliasDecl(AliasDecl),
@@ -37,9 +32,9 @@ pub enum Statement {
     If(If),
     While(While),
     ScopeBlock(ScopeBlock),
+    Unsafe(ScopeBlock),
 }
 
-// alias read-friendly
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AliasDecl {
     pub name: Ident,
@@ -48,18 +43,15 @@ pub struct AliasDecl {
     pub span: Option<Span>,
 }
 
-// for now it stays legal
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Instruction {
     pub mnemonic: Mnemonic,
     pub operands: Vec<Operand>,
 }
 
-// mnems 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Mnemonic(pub Ident);
 
-// the big 4 dawgs
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Operand {
     Register(Register),
@@ -68,14 +60,12 @@ pub enum Operand {
     MemoryAddress(MemoryAddress),
 }
 
-// phis or lexical
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Register {
     Physical(PhysicalRegister),
     Alias(Ident),
 }
 
-// hardware verify
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RegisterWidth {
     Reg64,
@@ -112,7 +102,6 @@ impl fmt::Display for RegisterWidth {
     }
 }
 
-// to be modified, atm is explicit
 #[allow(clippy::upper_case_acronyms)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PhysicalRegister {
@@ -190,18 +179,54 @@ impl PhysicalRegister {
     // width detection
     pub const fn width(self) -> RegisterWidth {
         match self {
-            Self::RAX | Self::RBX | Self::RCX | Self::RDX | Self::RSI | Self::RDI | Self::RBP | Self::RSP
-            | Self::R8 | Self::R9 | Self::R10 | Self::R11 | Self::R12 | Self::R13 | Self::R14 | Self::R15 => {
-                RegisterWidth::Reg64
-            }
-            Self::EAX | Self::EBX | Self::ECX | Self::EDX | Self::ESI | Self::EDI | Self::EBP | Self::ESP
-            | Self::R8D | Self::R9D | Self::R10D | Self::R11D | Self::R12D | Self::R13D | Self::R14D | Self::R15D => {
-                RegisterWidth::Reg32
-            }
-            Self::AX | Self::BX | Self::CX | Self::DX | Self::SI | Self::DI | Self::BP | Self::SP
-            | Self::R8W | Self::R9W | Self::R10W | Self::R11W | Self::R12W | Self::R13W | Self::R14W | Self::R15W => {
-                RegisterWidth::Reg16
-            }
+            Self::RAX
+            | Self::RBX
+            | Self::RCX
+            | Self::RDX
+            | Self::RSI
+            | Self::RDI
+            | Self::RBP
+            | Self::RSP
+            | Self::R8
+            | Self::R9
+            | Self::R10
+            | Self::R11
+            | Self::R12
+            | Self::R13
+            | Self::R14
+            | Self::R15 => RegisterWidth::Reg64,
+            Self::EAX
+            | Self::EBX
+            | Self::ECX
+            | Self::EDX
+            | Self::ESI
+            | Self::EDI
+            | Self::EBP
+            | Self::ESP
+            | Self::R8D
+            | Self::R9D
+            | Self::R10D
+            | Self::R11D
+            | Self::R12D
+            | Self::R13D
+            | Self::R14D
+            | Self::R15D => RegisterWidth::Reg32,
+            Self::AX
+            | Self::BX
+            | Self::CX
+            | Self::DX
+            | Self::SI
+            | Self::DI
+            | Self::BP
+            | Self::SP
+            | Self::R8W
+            | Self::R9W
+            | Self::R10W
+            | Self::R11W
+            | Self::R12W
+            | Self::R13W
+            | Self::R14W
+            | Self::R15W => RegisterWidth::Reg16,
             _ => RegisterWidth::Reg8,
         }
     }
@@ -315,23 +340,75 @@ impl PhysicalRegister {
     pub const fn bit_range(self) -> (u8, u8) {
         match self {
             // 64 bit full range
-            Self::RAX | Self::RBX | Self::RCX | Self::RDX | Self::RSI | Self::RDI | Self::RBP
-            | Self::RSP | Self::R8 | Self::R9 | Self::R10 | Self::R11 | Self::R12 | Self::R13
-            | Self::R14 | Self::R15 => (0, 64),
+            Self::RAX
+            | Self::RBX
+            | Self::RCX
+            | Self::RDX
+            | Self::RSI
+            | Self::RDI
+            | Self::RBP
+            | Self::RSP
+            | Self::R8
+            | Self::R9
+            | Self::R10
+            | Self::R11
+            | Self::R12
+            | Self::R13
+            | Self::R14
+            | Self::R15 => (0, 64),
 
             // 32 bit low
-            Self::EAX | Self::EBX | Self::ECX | Self::EDX | Self::ESI | Self::EDI | Self::EBP
-            | Self::ESP | Self::R8D | Self::R9D | Self::R10D | Self::R11D | Self::R12D | Self::R13D
-            | Self::R14D | Self::R15D => (0, 32),
+            Self::EAX
+            | Self::EBX
+            | Self::ECX
+            | Self::EDX
+            | Self::ESI
+            | Self::EDI
+            | Self::EBP
+            | Self::ESP
+            | Self::R8D
+            | Self::R9D
+            | Self::R10D
+            | Self::R11D
+            | Self::R12D
+            | Self::R13D
+            | Self::R14D
+            | Self::R15D => (0, 32),
 
             // 16 bit low
-            Self::AX | Self::BX | Self::CX | Self::DX | Self::SI | Self::DI | Self::BP | Self::SP
-            | Self::R8W | Self::R9W | Self::R10W | Self::R11W | Self::R12W | Self::R13W | Self::R14W
+            Self::AX
+            | Self::BX
+            | Self::CX
+            | Self::DX
+            | Self::SI
+            | Self::DI
+            | Self::BP
+            | Self::SP
+            | Self::R8W
+            | Self::R9W
+            | Self::R10W
+            | Self::R11W
+            | Self::R12W
+            | Self::R13W
+            | Self::R14W
             | Self::R15W => (0, 16),
 
             // 8 bit low
-            Self::AL | Self::BL | Self::CL | Self::DL | Self::SIL | Self::DIL | Self::BPL | Self::SPL
-            | Self::R8B | Self::R9B | Self::R10B | Self::R11B | Self::R12B | Self::R13B | Self::R14B
+            Self::AL
+            | Self::BL
+            | Self::CL
+            | Self::DL
+            | Self::SIL
+            | Self::DIL
+            | Self::BPL
+            | Self::SPL
+            | Self::R8B
+            | Self::R9B
+            | Self::R10B
+            | Self::R11B
+            | Self::R12B
+            | Self::R13B
+            | Self::R14B
             | Self::R15B => (0, 8),
 
             // 8 bit High in low 16
@@ -354,9 +431,6 @@ impl PhysicalRegister {
     }
 }
 
-
-// structures
-// base && index && displ
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MemoryAddress {
     pub base: Option<Register>,
@@ -364,14 +438,12 @@ pub struct MemoryAddress {
     pub displacement: i64,
 }
 
-// index carries
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IndexedRegister {
     pub register: Register,
     pub scale: u8,
 }
 
-// if statment
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct If {
     pub condition: Condition,
@@ -386,7 +458,6 @@ pub struct While {
     pub body: ScopeBlock,
 }
 
-// conditin for if / while
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Condition {
     pub left: Operand,
