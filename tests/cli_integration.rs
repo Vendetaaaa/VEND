@@ -35,3 +35,17 @@ fn cli_reports_source_diagnostics_and_fails() {
     let diagnostics = String::from_utf8_lossy(&output.stderr);
     assert!(diagnostics.contains("expects exactly two operands"));
 }
+
+#[test]
+fn cli_reports_semantic_diagnostics() {
+    let source = temp_source("semantic-error", "fn main() {\n    mov RAX, ECX\n}");
+    let output = Command::new(env!("CARGO_BIN_EXE_vend"))
+        .arg(&source)
+        .output()
+        .expect("vend binary should run");
+    fs::remove_file(source).expect("temporary source should be removable");
+
+    assert!(!output.status.success());
+    let diagnostics = String::from_utf8_lossy(&output.stderr);
+    assert!(diagnostics.contains("matching register widths"));
+}
