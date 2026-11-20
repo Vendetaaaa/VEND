@@ -1,5 +1,5 @@
-use crate::ast::*;
 use crate::analysis::Diagnostic;
+use crate::ast::*;
 use std::fmt;
 
 /// token by lexer
@@ -11,19 +11,20 @@ pub enum Token {
     If,
     Else,
     While,
-    
+    Unsafe,
+
     // ids
     Ident(String),
     Integer(i64),
-    
+
     PhysReg(PhysicalRegister),
-    
+
     // types ^^
     Reg64,
     Reg32,
     Reg16,
     Reg8,
-    
+
     // oprs and puncts
     LParen,
     RParen,
@@ -39,22 +40,21 @@ pub enum Token {
     Star,
     Newline,
     Semicolon,
-    
+
     // comparsaions
-    EqEq,      // ==
-    NotEq,     // !=
-    Lt,        // <
-    Gt,        // >
-    LtEq,      // <=
-    GtEq,      // >=
-    
+    EqEq,  // ==
+    NotEq, // !=
+    Lt,    // <
+    Gt,    // >
+    LtEq,  // <=
+    GtEq,  // >=
+
     // end of input
     Eof,
 
-	// invalid sc
-	Invalid(char),
+    // invalid sc
+    Invalid(char),
     InvalidNumber(String),
-	
 }
 
 impl fmt::Display for Token {
@@ -65,6 +65,7 @@ impl fmt::Display for Token {
             Token::If => write!(f, "'if'"),
             Token::Else => write!(f, "'else'"),
             Token::While => write!(f, "'while'"),
+            Token::Unsafe => write!(f, "'unsafe'"),
             Token::Ident(s) => write!(f, "identifier '{}'", s),
             Token::Integer(n) => write!(f, "integer {}", n),
             Token::PhysReg(r) => write!(f, "physical register '{}'", r),
@@ -93,7 +94,7 @@ impl fmt::Display for Token {
             Token::LtEq => write!(f, "'<='"),
             Token::GtEq => write!(f, "'>='"),
             Token::Eof => write!(f, "end of input"),
-			Token::Invalid(ch) => write!(f, "invalid character '{}'", ch),
+            Token::Invalid(ch) => write!(f, "invalid character '{}'", ch),
             Token::InvalidNumber(value) => write!(f, "invalid integer '{}'", value),
         }
     }
@@ -112,7 +113,11 @@ impl Lexer {
         Lexer {
             input: input.chars().collect(),
             pos: 0,
-            byte_positions: input.char_indices().map(|(index, _)| index).chain(std::iter::once(input.len())).collect(),
+            byte_positions: input
+                .char_indices()
+                .map(|(index, _)| index)
+                .chain(std::iter::once(input.len()))
+                .collect(),
             last_token_start: 0,
         }
     }
@@ -221,6 +226,7 @@ impl Lexer {
             "if" => Token::If,
             "else" => Token::Else,
             "while" => Token::While,
+            "unsafe" => Token::Unsafe,
             "reg64" => Token::Reg64,
             "reg32" => Token::Reg32,
             "reg16" => Token::Reg16,
@@ -370,8 +376,7 @@ impl Lexer {
             }
             Some('-') => {
                 self.advance();
-                if self.peek().map_or(false, |c| c.is_ascii_digit()) {
-                    // neg nr
+                if self.peek().is_some_and(|c| c.is_ascii_digit()) {
                     self.pos -= 1;
                     self.read_number()
                 } else {
@@ -461,7 +466,10 @@ impl Parser {
     }
 
     fn current_token(&self) -> &Token {
-        &self.tokens.get(self.pos).map(|(t, _)| t).unwrap_or(&Token::Eof)
+        self.tokens
+            .get(self.pos)
+            .map(|(t, _)| t)
+            .unwrap_or(&Token::Eof)
     }
 
     fn peek_token(&self, offset: usize) -> &Token {
@@ -492,11 +500,11 @@ impl Parser {
         } else {
             let span = self.current_span();
             self.diagnostics.push(Diagnostic {
-                message: format!(
-                    "Expected {}, found {}",
-                    expected, self.current_token()
-                ),
-                span: Some(Span { start: span, end: span + 1 }),
+                message: format!("Expected {}, found {}", expected, self.current_token()),
+                span: Some(Span {
+                    start: span,
+                    end: span + 1,
+                }),
             });
             Err(())
         }
@@ -511,8 +519,7 @@ impl Parser {
                 Ok(func) => functions.push(func),
                 Err(_) => {
                     // skip next function
-                    while self.current_token() != &Token::Eof
-                        && self.current_token() != &Token::Fn
+                    while self.current_token() != &Token::Eof && self.current_token() != &Token::Fn
                     {
                         self.advance();
                     }
@@ -539,7 +546,10 @@ impl Parser {
             let span = self.current_span();
             self.diagnostics.push(Diagnostic {
                 message: "Expected function name".to_string(),
-                span: Some(Span { start: span, end: span + 1 }),
+                span: Some(Span {
+                    start: span,
+                    end: span + 1,
+                }),
             });
             return Err(());
         };
@@ -569,7 +579,10 @@ impl Parser {
                 let span = self.current_span();
                 self.diagnostics.push(Diagnostic {
                     message: "Expected parameter name".to_string(),
-                    span: Some(Span { start: span, end: span + 1 }),
+                    span: Some(Span {
+                        start: span,
+                        end: span + 1,
+                    }),
                 });
                 return Err(());
             }
@@ -616,7 +629,12 @@ impl Parser {
     fn is_statement_start(&self) -> bool {
         matches!(
             self.current_token(),
-            Token::Alias | Token::If | Token::While | Token::LBrace | Token::Ident(_)
+            Token::Alias
+                | Token::If
+                | Token::While
+                | Token::Unsafe
+                | Token::LBrace
+                | Token::Ident(_)
         )
     }
 
@@ -625,13 +643,17 @@ impl Parser {
             Token::Alias => self.parse_alias_decl().map(Statement::AliasDecl),
             Token::If => self.parse_if().map(Statement::If),
             Token::While => self.parse_while().map(Statement::While),
+            Token::Unsafe => self.parse_unsafe().map(Statement::Unsafe),
             Token::LBrace => self.parse_nested_block().map(Statement::ScopeBlock),
             Token::Ident(_) => self.parse_instruction().map(Statement::Instruction),
             _ => {
                 let span = self.current_span();
                 self.diagnostics.push(Diagnostic {
                     message: format!("Unexpected token: {}", self.current_token()),
-                    span: Some(Span { start: span, end: span + 1 }),
+                    span: Some(Span {
+                        start: span,
+                        end: span + 1,
+                    }),
                 });
                 Err(())
             }
@@ -650,7 +672,10 @@ impl Parser {
             let span = self.current_span();
             self.diagnostics.push(Diagnostic {
                 message: "Expected alias name".to_string(),
-                span: Some(Span { start: span, end: span + 1 }),
+                span: Some(Span {
+                    start: span,
+                    end: span + 1,
+                }),
             });
             return Err(());
         };
@@ -677,9 +702,11 @@ impl Parser {
             _ => {
                 let span = self.current_span();
                 self.diagnostics.push(Diagnostic {
-                    message: "Expected register width (reg64, reg32, reg16, or reg8)"
-                        .to_string(),
-                    span: Some(Span { start: span, end: span + 1 }),
+                    message: "Expected register width (reg64, reg32, reg16, or reg8)".to_string(),
+                    span: Some(Span {
+                        start: span,
+                        end: span + 1,
+                    }),
                 });
                 return Err(());
             }
@@ -695,7 +722,10 @@ impl Parser {
             let span = self.current_span();
             self.diagnostics.push(Diagnostic {
                 message: "Expected physical register".to_string(),
-                span: Some(Span { start: span, end: span + 1 }),
+                span: Some(Span {
+                    start: span,
+                    end: span + 1,
+                }),
             });
             return Err(());
         };
@@ -716,7 +746,10 @@ impl Parser {
             let span = self.current_span();
             self.diagnostics.push(Diagnostic {
                 message: "Expected mnemonic".to_string(),
-                span: Some(Span { start: span, end: span + 1 }),
+                span: Some(Span {
+                    start: span,
+                    end: span + 1,
+                }),
             });
             return Err(());
         };
@@ -752,10 +785,7 @@ impl Parser {
         {
             let span = self.current_span();
             self.diagnostics.push(Diagnostic {
-                message: format!(
-                    "Instruction '{}' expects exactly two operands",
-                    mnemonic.0
-                ),
+                message: format!("Instruction '{}' expects exactly two operands", mnemonic.0),
                 span: Some(Span {
                     start: span,
                     end: span + 1,
@@ -770,7 +800,11 @@ impl Parser {
     fn is_operand_start(&self) -> bool {
         matches!(
             self.current_token(),
-            Token::Ident(_) | Token::PhysReg(_) | Token::Integer(_) | Token::LBracket | Token::Minus
+            Token::Ident(_)
+                | Token::PhysReg(_)
+                | Token::Integer(_)
+                | Token::LBracket
+                | Token::Minus
         )
     }
 
@@ -785,20 +819,24 @@ impl Parser {
                     let span = self.current_span();
                     self.diagnostics.push(Diagnostic {
                         message: "Expected number after minus".to_string(),
-                        span: Some(Span { start: span, end: span + 1 }),
+                        span: Some(Span {
+                            start: span,
+                            end: span + 1,
+                        }),
                     });
                     Err(())
                 }
             }
             Token::LBracket => self.parse_memory_address().map(Operand::MemoryAddress),
-            Token::Ident(_) | Token::PhysReg(_) => {
-                self.parse_register().map(Operand::Register)
-            }
+            Token::Ident(_) | Token::PhysReg(_) => self.parse_register().map(Operand::Register),
             _ => {
                 let span = self.current_span();
                 self.diagnostics.push(Diagnostic {
                     message: format!("Expected operand, found {}", self.current_token()),
-                    span: Some(Span { start: span, end: span + 1 }),
+                    span: Some(Span {
+                        start: span,
+                        end: span + 1,
+                    }),
                 });
                 Err(())
             }
@@ -818,7 +856,10 @@ impl Parser {
             let span = self.current_span();
             self.diagnostics.push(Diagnostic {
                 message: "Expected register".to_string(),
-                span: Some(Span { start: span, end: span + 1 }),
+                span: Some(Span {
+                    start: span,
+                    end: span + 1,
+                }),
             });
             Err(())
         }
@@ -845,7 +886,10 @@ impl Parser {
                         let span = self.current_span();
                         self.diagnostics.push(Diagnostic {
                             message: "Expected a positive scale factor".to_string(),
-                            span: Some(Span { start: span, end: span + 1 }),
+                            span: Some(Span {
+                                start: span,
+                                end: span + 1,
+                            }),
                         });
                         return Err(());
                     }
@@ -856,7 +900,10 @@ impl Parser {
                     let span = self.current_span();
                     self.diagnostics.push(Diagnostic {
                         message: "Expected scale factor".to_string(),
-                        span: Some(Span { start: span, end: span + 1 }),
+                        span: Some(Span {
+                            start: span,
+                            end: span + 1,
+                        }),
                     });
                     return Err(());
                 }
@@ -877,7 +924,10 @@ impl Parser {
                 let span = self.current_span();
                 self.diagnostics.push(Diagnostic {
                     message: "Expected displacement".to_string(),
-                    span: Some(Span { start: span, end: span + 1 }),
+                    span: Some(Span {
+                        start: span,
+                        end: span + 1,
+                    }),
                 });
                 return Err(());
             }
@@ -891,7 +941,10 @@ impl Parser {
                 let span = self.current_span();
                 self.diagnostics.push(Diagnostic {
                     message: "Expected displacement".to_string(),
-                    span: Some(Span { start: span, end: span + 1 }),
+                    span: Some(Span {
+                        start: span,
+                        end: span + 1,
+                    }),
                 });
                 return Err(());
             }
@@ -941,6 +994,14 @@ impl Parser {
         Ok(While { condition, body })
     }
 
+    fn parse_unsafe(&mut self) -> Result<ScopeBlock, ()> {
+        self.expect(Token::Unsafe)?;
+        self.expect(Token::LBrace)?;
+        let block = self.parse_scope_block()?;
+        self.expect(Token::RBrace)?;
+        Ok(block)
+    }
+
     fn parse_condition(&mut self) -> Result<Condition, ()> {
         let left = self.parse_operand()?;
         let op = self.parse_comparison_op()?;
@@ -961,7 +1022,10 @@ impl Parser {
                 let span = self.current_span();
                 self.diagnostics.push(Diagnostic {
                     message: "Expected comparison operator".to_string(),
-                    span: Some(Span { start: span, end: span + 1 }),
+                    span: Some(Span {
+                        start: span,
+                        end: span + 1,
+                    }),
                 });
                 return Err(());
             }
@@ -1015,9 +1079,18 @@ mod tests {
     #[test]
     fn lexer_tokenizes_physical_registers() {
         let mut lexer = Lexer::new("RAX EAX AX");
-        assert!(matches!(lexer.next_token(), Token::PhysReg(PhysicalRegister::RAX)));
-        assert!(matches!(lexer.next_token(), Token::PhysReg(PhysicalRegister::EAX)));
-        assert!(matches!(lexer.next_token(), Token::PhysReg(PhysicalRegister::AX)));
+        assert!(matches!(
+            lexer.next_token(),
+            Token::PhysReg(PhysicalRegister::RAX)
+        ));
+        assert!(matches!(
+            lexer.next_token(),
+            Token::PhysReg(PhysicalRegister::EAX)
+        ));
+        assert!(matches!(
+            lexer.next_token(),
+            Token::PhysReg(PhysicalRegister::AX)
+        ));
     }
 
     #[test]
