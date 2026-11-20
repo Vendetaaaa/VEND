@@ -2,7 +2,6 @@ use crate::ast::*;
 use std::collections::HashMap;
 use std::fmt;
 
-/// diagnosis
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Diagnostic {
     pub message: String,
@@ -23,7 +22,6 @@ impl fmt::Display for Diagnostic {
 }
 
 impl Diagnostic {
-    /// diag w new comment
     pub fn new(message: impl Into<String>) -> Self {
         Diagnostic {
             message: message.into(),
@@ -31,7 +29,6 @@ impl Diagnostic {
         }
     }
 
-    /// source span
     pub fn with_span(mut self, span: Span) -> Self {
         self.span = Some(span);
         self
@@ -45,7 +42,6 @@ impl Diagnostic {
                 let mut line_num = 0;
                 let mut line_start = 0;
 
-                // what line is an error
                 for (i, line) in lines.iter().enumerate() {
                     let line_len = line.len() + 1;
                     if char_count + line_len > span.start {
@@ -74,7 +70,6 @@ impl Diagnostic {
     }
 }
 
-/// validates aliasis to prevent overriding
 pub fn validate_aliases(block: &ScopeBlock) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     let mut active: Vec<AliasDecl> = Vec::new();
@@ -84,7 +79,6 @@ pub fn validate_aliases(block: &ScopeBlock) -> Vec<Diagnostic> {
             match stmt {
                 Statement::AliasDecl(a) => {
                     for other in active.iter() {
-                        // allowed
                         if a.name == other.name {
                             continue;
                         }
@@ -100,7 +94,6 @@ pub fn validate_aliases(block: &ScopeBlock) -> Vec<Diagnostic> {
                     active.push(a.clone());
                 }
                 Statement::ScopeBlock(s) => {
-                    // new lexical block
                     let before = active.len();
                     walk(s, active, diags);
                     active.truncate(before);
@@ -111,7 +104,6 @@ pub fn validate_aliases(block: &ScopeBlock) -> Vec<Diagnostic> {
                     active.truncate(before);
                 }
                 Statement::If(i) => {
-                    // inherance
                     let before = active.len();
                     walk(&i.then_block, active, diags);
                     active.truncate(before);
@@ -135,7 +127,6 @@ pub fn validate_aliases(block: &ScopeBlock) -> Vec<Diagnostic> {
     diags
 }
 
-// full analysis across program
 pub fn analyze_program(prog: &crate::ast::Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     for func in &prog.functions {
@@ -167,15 +158,13 @@ pub fn analyze_program(prog: &crate::ast::Program) -> Vec<Diagnostic> {
     diags
 }
 
-/// vallidation for the ADI
 pub fn validate_types(block: &ScopeBlock) -> Vec<Diagnostic> {
     let mut diagnostics = Vec::new();
     let mut active = HashMap::new();
-    walk_types(block, &mut active, &mut diagnostics);
+    walk_types(block, &mut active, &mut diagnostics, TypeCheckMode::Checked);
     diagnostics
 }
 
-/// type check for every run
 pub fn analyze_program_types(prog: &crate::ast::Program) -> Vec<Vec<Diagnostic>> {
     prog.functions
         .iter()
@@ -183,10 +172,23 @@ pub fn analyze_program_types(prog: &crate::ast::Program) -> Vec<Vec<Diagnostic>>
         .collect()
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TypeCheckMode {
+    Checked,
+    Unsafe,
+}
+
+impl TypeCheckMode {
+    fn allows_hand_tuned_operands(self) -> bool {
+        matches!(self, Self::Unsafe)
+    }
+}
+
 fn walk_types(
     block: &ScopeBlock,
     active: &mut HashMap<String, Vec<RegisterWidth>>,
     diagnostics: &mut Vec<Diagnostic>,
+    mode: TypeCheckMode,
 ) {
     let mut declared_names = Vec::new();
 
@@ -212,28 +214,36 @@ fn walk_types(
                 declared_names.push(alias.name.clone());
             }
             Statement::Instruction(instruction) => {
-                for operand in &instruction.operands {
-                    validate_operand_types(operand, active, diagnostics);
+                if !mode.allows_hand_tuned_operands() {
+                    for operand in &instruction.operands {
+                        validate_operand_types(operand, active, diagnostics);
+                    }
+                    validate_instruction_types(instruction, active, diagnostics);
                 }
-                validate_instruction_types(instruction, active, diagnostics);
             }
             Statement::If(if_statement) => {
-                validate_operand_types(&if_statement.condition.left, active, diagnostics);
-                validate_operand_types(&if_statement.condition.right, active, diagnostics);
-                validate_condition_types(&if_statement.condition, active, diagnostics);
-                walk_types(&if_statement.then_block, active, diagnostics);
+                if !mode.allows_hand_tuned_operands() {
+                    validate_operand_types(&if_statement.condition.left, active, diagnostics);
+                    validate_operand_types(&if_statement.condition.right, active, diagnostics);
+                    validate_condition_types(&if_statement.condition, active, diagnostics);
+                }
+                walk_types(&if_statement.then_block, active, diagnostics, mode);
                 if let Some(else_block) = &if_statement.else_block {
-                    walk_types(else_block, active, diagnostics);
+                    walk_types(else_block, active, diagnostics, mode);
                 }
             }
             Statement::While(while_statement) => {
-                validate_operand_types(&while_statement.condition.left, active, diagnostics);
-                validate_operand_types(&while_statement.condition.right, active, diagnostics);
-                validate_condition_types(&while_statement.condition, active, diagnostics);
-                walk_types(&while_statement.body, active, diagnostics);
+                if !mode.allows_hand_tuned_operands() {
+                    validate_operand_types(&while_statement.condition.left, active, diagnostics);
+                    validate_operand_types(&while_statement.condition.right, active, diagnostics);
+                    validate_condition_types(&while_statement.condition, active, diagnostics);
+                }
+                walk_types(&while_statement.body, active, diagnostics, mode);
             }
-            Statement::ScopeBlock(nested) => walk_types(nested, active, diagnostics),
-            Statement::Unsafe(nested) => walk_types(nested, active, diagnostics),
+            Statement::ScopeBlock(nested) => walk_types(nested, active, diagnostics, mode),
+            Statement::Unsafe(nested) => {
+                walk_types(nested, active, diagnostics, TypeCheckMode::Unsafe)
+            }
         }
     }
 
