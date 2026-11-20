@@ -1,6 +1,5 @@
 use vend_ast::{
-    parse, ComparisonOp, Condition, FunctionDecl, Operand, PhysicalRegister, Program, Register,
-    RegisterWidth, ScopeBlock, Statement,
+    parse, ComparisonOp, Operand, PhysicalRegister, Register, RegisterWidth, Statement,
 };
 
 #[test]
@@ -439,7 +438,7 @@ fn parser_preserves_utf8_byte_offsets_in_diagnostics() {
     let input = "fn tést() { @ }";
     let diagnostics = parse(input).expect_err("invalid character should be diagnosed");
     let at = input.find('@').expect("test marker should exist");
-    assert!(diagnostics.iter().any(|diagnostic| {
-        diagnostic.span.is_some_and(|span| span.start == at)
-    }));
+    assert!(diagnostics
+        .iter()
+        .any(|diagnostic| { diagnostic.span.is_some_and(|span| span.start == at) }));
 }
