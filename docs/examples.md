@@ -36,6 +36,23 @@ fn choose(flag) {
 }
 ```
 
+
+## Explicit Unsafe Hand-Tuning
+
+Use `unsafe` only for operations whose deliberate register pairing or memory
+address encoding is lower-level than VEND's ordinary intent checks. The block
+does not make unknown aliases or malformed external calls valid:
+
+```vend
+fn overwrite() {
+    alias ptr: reg64 = RAX
+    unsafe {
+        mov RAX, ECX
+        mov ptr, [RCX]
+    }
+}
+```
+
 ### Both comma-sep & same-line whitespace-sep operands are accepted.
 
 ```vend
