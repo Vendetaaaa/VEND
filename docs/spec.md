@@ -22,7 +22,21 @@ fn main(argc, argv) {
 - instructions use a mnemonic and one or more operands.
 - `if` and `while` are structured control-flow nodes.
 - Statements may be separated by a newline or `;`.
-- `unsafe { ... }` explicitly delimits hand-tuned instructions that bypass higher-level intent checks while preserving normal alias and ABI traversal.
+- `unsafe { ... }` opts an ordinary lexical block into hand-tuned machine
+  operations. It is not a second language or an escape from parsing and
+  emission. It affects only the following operand and condition intent checks:
+  - matching register widths for `mov`, `add`, `sub`, `xor`, `cmp`, and `test`;
+  - matching condition widths;
+  - 64-bit width for memory base and index registers; and
+  - the valid memory-index scales `1`, `2`, `4`, and `8`.
+
+  The block keeps normal syntax validation, alias declaration-width validation,
+  alias conflict/visibility/liveness validation, lowering, and ABI call-shape
+  validation. It does not relax alias lookup: aliases declared outside remain
+  visible according to lexical scope, aliases declared inside end at that
+  block's scope, and unresolved aliases are still diagnostics. For example,
+  `unsafe { mov RAX, ECX }` is accepted, because the 64-bit/32-bit pairing is
+  intentionally machine-level; `mov missing, RAX` is not.
 - `mov RAX RBX` and `mov RAX, RBX` are equivalent.
 
 ## Registers
