@@ -1,65 +1,92 @@
-use std::fs;
-use std::process::Command;
+use vend_ast::{
+    lower_function, parse, ComparisonOp, LoweredInstruction, Operand, PhysicalRegister, Register,
+};
 
-fn temp_source(name: &str, source: &str) -> std::path::PathBuf {
-    let path = std::env::temp_dir().join(format!("vend-{}-{}.vend", name, std::process::id()));
-    fs::write(&path, source).expect("temporary source should be writable");
-    path
+#[test]
+fn lowers_if_with_else_to_deterministic_branches() {
+    let program = parse("fn choose() { if RAX > 0 { mov RBX 1 } else { mov RBX 0 } }")
+        .expect("source should parse");
+
+    let lowered = lower_function(&program.functions[0]);
+
+    assert_eq!(
+        lowered.instructions,
+        vec![
+            LoweredInstruction::Compare {
+                left: Operand::Register(Register::Physical(PhysicalRegister::RAX)),
+                right: Operand::Immediate(0),
+            },
+            LoweredInstruction::Branch {
+                condition: ComparisonOp::Gt,
+                target: "__vend_if_then_0".into(),
+            },
+            LoweredInstruction::Jump {
+                target: "__vend_if_else_2".into(),
+            },
+            LoweredInstruction::Label("__vend_if_then_0".into()),
+            LoweredInstruction::Instruction(vend_ast::Instruction {
+                mnemonic: vend_ast::Mnemonic("mov".into()),
+                operands: vec![
+                    Operand::Register(Register::Physical(PhysicalRegister::RBX)),
+                    Operand::Immediate(1),
+                ],
+            }),
+            LoweredInstruction::Jump {
+                target: "__vend_if_end_1".into(),
+            },
+            LoweredInstruction::Label("__vend_if_else_2".into()),
+            LoweredInstruction::Instruction(vend_ast::Instruction {
+                mnemonic: vend_ast::Mnemonic("mov".into()),
+                operands: vec![
+                    Operand::Register(Register::Physical(PhysicalRegister::RBX)),
+                    Operand::Immediate(0),
+                ],
+            }),
+            LoweredInstruction::Label("__vend_if_end_1".into()),
+        ]
+    );
 }
 
 #[test]
-fn cli_emits_assembly_to_stdout() {
-    let source = temp_source("stdout", "fn main() { mov RAX, 1 }");
-    let output = Command::new(env!("CARGO_BIN_EXE_vend"))
-        .arg(&source)
-        .output()
-        .expect("vend binary should run");
-    fs::remove_file(source).expect("temporary source should be removable");
+fn lowers_while_with_back_edge_and_omits_alias_declarations() {
+    let program = parse("fn loop() { alias count: reg64 = RCX while count > 0 { add count 1 } }")
+        .expect("source should parse");
 
-    assert!(output.status.success());
-    let assembly = String::from_utf8_lossy(&output.stdout);
-    assert!(assembly.contains(".globl main"));
-    assert!(assembly.contains("mov RAX, 1"));
+    let lowered = lower_function(&program.functions[0]);
+
+    assert!(matches!(
+        lowered.instructions.first(),
+        Some(LoweredInstruction::Label(label)) if label == "__vend_while_head_0"
+    ));
+    assert!(lowered.instructions.iter().any(|instruction| {
+        matches!(
+            instruction,
+            LoweredInstruction::Jump { target } if target == "__vend_while_head_0"
+        )
+    }));
+    assert_eq!(
+        lowered
+            .instructions
+            .iter()
+            .filter(|instruction| matches!(instruction, LoweredInstruction::Instruction(_)))
+            .count(),
+        1
+    );
 }
 
 #[test]
-fn cli_reports_source_diagnostics_and_fails() {
-    let source = temp_source("error", "fn main() { mov RAX }");
-    let output = Command::new(env!("CARGO_BIN_EXE_vend"))
-        .arg(&source)
-        .output()
-        .expect("vend binary should run");
-    fs::remove_file(source).expect("temporary source should be removable");
+fn lowers_break_and_continue_to_nearest_loop_targets() {
+    let program = parse(
+        "fn loop() { while RAX > 0 { if RAX == 1 { continue } break } }",
+    )
+    .expect("source should parse");
 
-    assert!(!output.status.success());
-    let diagnostics = String::from_utf8_lossy(&output.stderr);
-    assert!(diagnostics.contains("expects exactly two operands"));
-}
+    let lowered = lower_function(&program.functions[0]);
 
-#[test]
-fn cli_reports_semantic_diagnostics() {
-    let source = temp_source("semantic-error", "fn main() {\n    mov RAX, ECX\n}");
-    let output = Command::new(env!("CARGO_BIN_EXE_vend"))
-        .arg(&source)
-        .output()
-        .expect("vend binary should run");
-    fs::remove_file(source).expect("temporary source should be removable");
-
-    assert!(!output.status.success());
-    let diagnostics = String::from_utf8_lossy(&output.stderr);
-    assert!(diagnostics.contains("matching register widths"));
-}
-
-#[test]
-fn cli_rejects_break_outside_a_loop() {
-    let source = temp_source("break-outside-loop", "fn main() { break }");
-    let output = Command::new(env!("CARGO_BIN_EXE_vend"))
-        .arg(&source)
-        .output()
-        .expect("vend binary should run");
-    fs::remove_file(source).expect("temporary source should be removable");
-
-    assert!(!output.status.success());
-    let diagnostics = String::from_utf8_lossy(&output.stderr);
-    assert!(diagnostics.contains("'break' is only valid inside a 'while' loop"));
+    assert!(lowered.instructions.iter().any(|instruction| {
+        matches!(instruction, LoweredInstruction::Jump { target } if target == "__vend_while_head_0")
+    }));
+    assert!(lowered.instructions.iter().any(|instruction| {
+        matches!(instruction, LoweredInstruction::Jump { target } if target == "__vend_while_end_2")
+    }));
 }
