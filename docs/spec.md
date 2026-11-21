@@ -38,6 +38,8 @@ fn main(argc, argv) {
   `unsafe { mov RAX, ECX }` is accepted, because the 64-bit/32-bit pairing is
   intentionally machine-level; `mov missing, RAX` is not.
 - `mov RAX RBX` and `mov RAX, RBX` are equivalent.
+- `break` exits the nearest `while` loop.
+- `continue` jumps to the next iteration of the nearest `while` loop.
 
 ## Registers
 
