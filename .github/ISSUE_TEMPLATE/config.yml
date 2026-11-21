@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Language specification
+    url: https://github.com/Vendetaaaa/VEND/blob/main/docs/spec.md
+    about: Read the current VEND syntax and semantics.
