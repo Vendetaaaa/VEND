@@ -118,7 +118,7 @@ pub fn validate_aliases(block: &ScopeBlock) -> Vec<Diagnostic> {
                     walk(&w.body, active, diags);
                     active.truncate(before);
                 }
-                Statement::Instruction(_) => {}
+                Statement::Instruction(_) | Statement::Break | Statement::Continue => {}
             }
         }
     }
@@ -130,6 +130,7 @@ pub fn validate_aliases(block: &ScopeBlock) -> Vec<Diagnostic> {
 pub fn analyze_program(prog: &crate::ast::Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     for func in &prog.functions {
+        diags.extend(validate_loop_controls(&func.body));
         let mut func_diags = validate_aliases(&func.body);
         for d in func_diags.drain(..) {
             let msg = format!("In function '{}': {}", func.name, d.message);
@@ -156,6 +157,49 @@ pub fn analyze_program(prog: &crate::ast::Program) -> Vec<Diagnostic> {
         }
     }
     diags
+}
+
+pub fn validate_loop_controls(block: &ScopeBlock) -> Vec<Diagnostic> {
+    fn walk(
+        block: &ScopeBlock,
+        loop_depth: usize,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        for statement in &block.statements {
+            match statement {
+                Statement::Break => {
+                    if loop_depth == 0 {
+                        diagnostics.push(Diagnostic::new(
+                            "'break' is only valid inside a 'while' loop",
+                        ));
+                    }
+                }
+                Statement::Continue => {
+                    if loop_depth == 0 {
+                        diagnostics.push(Diagnostic::new(
+                            "'continue' is only valid inside a 'while' loop",
+                        ));
+                    }
+                }
+                Statement::If(statement) => {
+                    walk(&statement.then_block, loop_depth, diagnostics);
+                    if let Some(else_block) = &statement.else_block {
+                        walk(else_block, loop_depth, diagnostics);
+                    }
+                }
+                Statement::While(statement) => {
+                    walk(&statement.body, loop_depth + 1, diagnostics);
+                }
+                Statement::ScopeBlock(nested) => walk(nested, loop_depth, diagnostics),
+                Statement::Unsafe(nested) => walk(nested, loop_depth, diagnostics),
+                Statement::AliasDecl(_) | Statement::Instruction(_) => {}
+            }
+        }
+    }
+
+    let mut diagnostics = Vec::new();
+    walk(block, 0, &mut diagnostics);
+    diagnostics
 }
 
 pub fn validate_types(block: &ScopeBlock) -> Vec<Diagnostic> {
@@ -244,6 +288,7 @@ fn walk_types(
             Statement::Unsafe(nested) => {
                 walk_types(nested, active, diagnostics, TypeCheckMode::Unsafe)
             }
+            Statement::Break | Statement::Continue => {}
         }
     }
 
@@ -495,6 +540,7 @@ fn walk_liveness(
             Statement::Unsafe(nested) => {
                 walk_liveness(nested, Some(scope_id), depth + 1, active, report);
             }
+            Statement::Break | Statement::Continue => {}
         }
     }
     for name in declared_names.into_iter().rev() {
