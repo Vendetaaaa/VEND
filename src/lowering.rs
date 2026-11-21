@@ -44,6 +44,7 @@ pub fn lower_function(function: &FunctionDecl) -> LoweredFunction {
         next_label: 0,
         instructions: Vec::new(),
         aliases: HashMap::new(),
+        loop_stack: Vec::new(),
     };
     context.lower_block(&function.body);
 
@@ -58,6 +59,7 @@ struct LoweringContext {
     next_label: usize,
     instructions: Vec<LoweredInstruction>,
     aliases: HashMap<String, Vec<PhysicalRegister>>,
+    loop_stack: Vec<(String, String)>,
 }
 
 impl LoweringContext {
@@ -84,6 +86,7 @@ impl LoweringContext {
                     ));
                 }
                 Statement::ScopeBlock(nested) => self.lower_block(nested),
+                Statement::Unsafe(nested) => self.lower_block(nested),
                 Statement::If(if_statement) => self.lower_if(
                     &self.resolve_condition(&if_statement.condition),
                     &if_statement.then_block,
@@ -92,6 +95,20 @@ impl LoweringContext {
                 Statement::While(while_statement) => {
                     let condition = self.resolve_condition(&while_statement.condition);
                     self.lower_while(&condition, &while_statement.body)
+                }
+                Statement::Break => {
+                    if let Some((break_label, _)) = self.loop_stack.last() {
+                        self.instructions.push(LoweredInstruction::Jump {
+                            target: break_label.clone(),
+                        });
+                    }
+                }
+                Statement::Continue => {
+                    if let Some((_, continue_label)) = self.loop_stack.last() {
+                        self.instructions.push(LoweredInstruction::Jump {
+                            target: continue_label.clone(),
+                        });
+                    }
                 }
             }
         }
@@ -213,7 +230,10 @@ impl LoweringContext {
         });
         self.instructions
             .push(LoweredInstruction::Label(body_label));
+        self.loop_stack
+            .push((end_label.clone(), head_label.clone()));
         self.lower_block(body);
+        self.loop_stack.pop();
         self.instructions
             .push(LoweredInstruction::Jump { target: head_label });
         self.instructions.push(LoweredInstruction::Label(end_label));
