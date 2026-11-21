@@ -1,0 +1,30 @@
+name: Feature request
+description: Suggest a feature that fits VEND's low-level systems scope
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What limitation or workflow does this improve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed language or tooling behavior
+      description: Include syntax or CLI examples when applicable.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This proposal remains close to VEND's assembly, register, scope, and ABI model.
+          required: true
