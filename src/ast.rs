@@ -1,476 +1,838 @@
+use crate::ast::*;
+use std::collections::HashMap;
 use std::fmt;
 
-pub type Ident = String;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Span {
-    pub start: usize,
-    pub end: usize,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Program {
-    pub functions: Vec<FunctionDecl>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FunctionDecl {
-    pub name: Ident,
-    pub params: Vec<Ident>,
-    pub body: ScopeBlock,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ScopeBlock {
-    pub statements: Vec<Statement>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Statement {
-    AliasDecl(AliasDecl),
-    Instruction(Instruction),
-    If(If),
-    While(While),
-    ScopeBlock(ScopeBlock),
-    Unsafe(ScopeBlock),
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct AliasDecl {
-    pub name: Ident,
-    pub width: RegisterWidth,
-    pub physical: PhysicalRegister,
+pub struct Diagnostic {
+    pub message: String,
     pub span: Option<Span>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Instruction {
-    pub mnemonic: Mnemonic,
-    pub operands: Vec<Operand>,
+impl fmt::Display for Diagnostic {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.span {
+            Some(span) => write!(
+                f,
+                "{} (at position {}..{})",
+                self.message, span.start, span.end
+            ),
+            None => write!(f, "{}", self.message),
+        }
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Mnemonic(pub Ident);
+impl Diagnostic {
+    pub fn new(message: impl Into<String>) -> Self {
+        Diagnostic {
+            message: message.into(),
+            span: None,
+        }
+    }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Operand {
-    Register(Register),
-    Immediate(i64),
-    Symbol(Ident),
-    MemoryAddress(MemoryAddress),
+    pub fn with_span(mut self, span: Span) -> Self {
+        self.span = Some(span);
+        self
+    }
+
+    pub fn format_with_source(&self, source: &str) -> String {
+        match self.span {
+            Some(span) => {
+                let lines: Vec<&str> = source.lines().collect();
+                let mut char_count = 0;
+                let mut line_num = 0;
+                let mut line_start = 0;
+
+                for (i, line) in lines.iter().enumerate() {
+                    let line_len = line.len() + 1;
+                    if char_count + line_len > span.start {
+                        line_num = i;
+                        line_start = char_count;
+                        break;
+                    }
+                    char_count += line_len;
+                }
+
+                let line = lines.get(line_num).unwrap_or(&"");
+                let col = span.start - line_start;
+
+                format!(
+                    "{}:{}:{}  {}\n{}\n{}^",
+                    line_num + 1,
+                    col + 1,
+                    span.end - span.start,
+                    self.message,
+                    line,
+                    " ".repeat(col)
+                )
+            }
+            None => self.message.clone(),
+        }
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Register {
-    Physical(PhysicalRegister),
-    Alias(Ident),
+pub fn validate_aliases(block: &ScopeBlock) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    let mut active: Vec<AliasDecl> = Vec::new();
+
+    fn walk(block: &ScopeBlock, active: &mut Vec<AliasDecl>, diags: &mut Vec<Diagnostic>) {
+        for stmt in &block.statements {
+            match stmt {
+                Statement::AliasDecl(a) => {
+                    for other in active.iter() {
+                        if a.name == other.name {
+                            continue;
+                        }
+                        if a.physical.overlaps(other.physical) {
+                            let msg = format!(
+                                "Alias conflict: '{}' ({}) overlaps '{}' ({})",
+                                a.name, a.physical, other.name, other.physical
+                            );
+                            let span = a.span.or(other.span);
+                            diags.push(Diagnostic { message: msg, span });
+                        }
+                    }
+                    active.push(a.clone());
+                }
+                Statement::ScopeBlock(s) => {
+                    let before = active.len();
+                    walk(s, active, diags);
+                    active.truncate(before);
+                }
+                Statement::Unsafe(s) => {
+                    let before = active.len();
+                    walk(s, active, diags);
+                    active.truncate(before);
+                }
+                Statement::If(i) => {
+                    let before = active.len();
+                    walk(&i.then_block, active, diags);
+                    active.truncate(before);
+                    if let Some(else_blk) = &i.else_block {
+                        let before2 = active.len();
+                        walk(else_blk, active, diags);
+                        active.truncate(before2);
+                    }
+                }
+                Statement::While(w) => {
+                    let before = active.len();
+                    walk(&w.body, active, diags);
+                    active.truncate(before);
+                }
+                Statement::Instruction(_) | Statement::Break | Statement::Continue => {}
+            }
+        }
+    }
+
+    walk(block, &mut active, &mut diags);
+    diags
+}
+
+pub fn analyze_program(prog: &crate::ast::Program) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    for func in &prog.functions {
+        diags.extend(validate_loop_controls(&func.body));
+        let mut func_diags = validate_aliases(&func.body);
+        for d in func_diags.drain(..) {
+            let msg = format!("In function '{}': {}", func.name, d.message);
+            diags.push(Diagnostic {
+                message: msg,
+                span: d.span,
+            });
+        }
+        let mut type_diags = validate_types(&func.body);
+        for d in type_diags.drain(..) {
+            let msg = format!("In function '{}': {}", func.name, d.message);
+            diags.push(Diagnostic {
+                message: msg,
+                span: d.span,
+            });
+        }
+        let mut liveness_diags = analyze_liveness(&func.body).diagnostics;
+        for d in liveness_diags.drain(..) {
+            let msg = format!("In function '{}': {}", func.name, d.message);
+            diags.push(Diagnostic {
+                message: msg,
+                span: d.span,
+            });
+        }
+    }
+    diags
+}
+
+pub fn validate_loop_controls(block: &ScopeBlock) -> Vec<Diagnostic> {
+    fn walk(
+        block: &ScopeBlock,
+        loop_depth: usize,
+        diagnostics: &mut Vec<Diagnostic>,
+    ) {
+        for statement in &block.statements {
+            match statement {
+                Statement::Break => {
+                    if loop_depth == 0 {
+                        diagnostics.push(Diagnostic::new(
+                            "'break' is only valid inside a 'while' loop",
+                        ));
+                    }
+                }
+                Statement::Continue => {
+                    if loop_depth == 0 {
+                        diagnostics.push(Diagnostic::new(
+                            "'continue' is only valid inside a 'while' loop",
+                        ));
+                    }
+                }
+                Statement::If(statement) => {
+                    walk(&statement.then_block, loop_depth, diagnostics);
+                    if let Some(else_block) = &statement.else_block {
+                        walk(else_block, loop_depth, diagnostics);
+                    }
+                }
+                Statement::While(statement) => {
+                    walk(&statement.body, loop_depth + 1, diagnostics);
+                }
+                Statement::ScopeBlock(nested) => walk(nested, loop_depth, diagnostics),
+                Statement::Unsafe(nested) => walk(nested, loop_depth, diagnostics),
+                Statement::AliasDecl(_) | Statement::Instruction(_) => {}
+            }
+        }
+    }
+
+    let mut diagnostics = Vec::new();
+    walk(block, 0, &mut diagnostics);
+    diagnostics
+}
+
+pub fn validate_types(block: &ScopeBlock) -> Vec<Diagnostic> {
+    let mut diagnostics = Vec::new();
+    let mut active = HashMap::new();
+    walk_types(block, &mut active, &mut diagnostics, TypeCheckMode::Checked);
+    diagnostics
+}
+
+pub fn analyze_program_types(prog: &crate::ast::Program) -> Vec<Vec<Diagnostic>> {
+    prog.functions
+        .iter()
+        .map(|function| validate_types(&function.body))
+        .collect()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RegisterWidth {
-    Reg64,
-    Reg32,
-    Reg16,
-    Reg8,
+enum TypeCheckMode {
+    Checked,
+    Unsafe,
 }
 
-impl RegisterWidth {
-    // compare the bits by width
-    pub const fn bits(self) -> u8 {
-        match self {
-            Self::Reg64 => 64,
-            Self::Reg32 => 32,
-            Self::Reg16 => 16,
-            Self::Reg8 => 8,
+impl TypeCheckMode {
+    fn allows_hand_tuned_operands(self) -> bool {
+        matches!(self, Self::Unsafe)
+    }
+}
+
+fn walk_types(
+    block: &ScopeBlock,
+    active: &mut HashMap<String, Vec<RegisterWidth>>,
+    diagnostics: &mut Vec<Diagnostic>,
+    mode: TypeCheckMode,
+) {
+    let mut declared_names = Vec::new();
+
+    for statement in &block.statements {
+        match statement {
+            Statement::AliasDecl(alias) => {
+                if alias.width != alias.physical.width() {
+                    diagnostics.push(Diagnostic {
+                        message: format!(
+                            "Alias '{}' declares {} but physical register {} is {}",
+                            alias.name,
+                            alias.width,
+                            alias.physical,
+                            alias.physical.width()
+                        ),
+                        span: alias.span,
+                    });
+                }
+                active
+                    .entry(alias.name.clone())
+                    .or_default()
+                    .push(alias.width);
+                declared_names.push(alias.name.clone());
+            }
+            Statement::Instruction(instruction) => {
+                if !mode.allows_hand_tuned_operands() {
+                    for operand in &instruction.operands {
+                        validate_operand_types(operand, active, diagnostics);
+                    }
+                    validate_instruction_types(instruction, active, diagnostics);
+                }
+            }
+            Statement::If(if_statement) => {
+                if !mode.allows_hand_tuned_operands() {
+                    validate_operand_types(&if_statement.condition.left, active, diagnostics);
+                    validate_operand_types(&if_statement.condition.right, active, diagnostics);
+                    validate_condition_types(&if_statement.condition, active, diagnostics);
+                }
+                walk_types(&if_statement.then_block, active, diagnostics, mode);
+                if let Some(else_block) = &if_statement.else_block {
+                    walk_types(else_block, active, diagnostics, mode);
+                }
+            }
+            Statement::While(while_statement) => {
+                if !mode.allows_hand_tuned_operands() {
+                    validate_operand_types(&while_statement.condition.left, active, diagnostics);
+                    validate_operand_types(&while_statement.condition.right, active, diagnostics);
+                    validate_condition_types(&while_statement.condition, active, diagnostics);
+                }
+                walk_types(&while_statement.body, active, diagnostics, mode);
+            }
+            Statement::ScopeBlock(nested) => walk_types(nested, active, diagnostics, mode),
+            Statement::Unsafe(nested) => {
+                walk_types(nested, active, diagnostics, TypeCheckMode::Unsafe)
+            }
+            Statement::Break | Statement::Continue => {}
         }
     }
 
-    // read-friendly form
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::Reg64 => "reg64",
-            Self::Reg32 => "reg32",
-            Self::Reg16 => "reg16",
-            Self::Reg8 => "reg8",
-        }
-    }
-}
-
-impl fmt::Display for RegisterWidth {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
-#[allow(clippy::upper_case_acronyms)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PhysicalRegister {
-    RAX,
-    EAX,
-    AX,
-    AL,
-    AH,
-    RBX,
-    EBX,
-    BX,
-    BL,
-    BH,
-    RCX,
-    ECX,
-    CX,
-    CL,
-    CH,
-    RDX,
-    EDX,
-    DX,
-    DL,
-    DH,
-    RSI,
-    ESI,
-    SI,
-    SIL,
-    RDI,
-    EDI,
-    DI,
-    DIL,
-    RBP,
-    EBP,
-    BP,
-    BPL,
-    RSP,
-    ESP,
-    SP,
-    SPL,
-    R8,
-    R8D,
-    R8W,
-    R8B,
-    R9,
-    R9D,
-    R9W,
-    R9B,
-    R10,
-    R10D,
-    R10W,
-    R10B,
-    R11,
-    R11D,
-    R11W,
-    R11B,
-    R12,
-    R12D,
-    R12W,
-    R12B,
-    R13,
-    R13D,
-    R13W,
-    R13B,
-    R14,
-    R14D,
-    R14W,
-    R14B,
-    R15,
-    R15D,
-    R15W,
-    R15B,
-}
-
-impl PhysicalRegister {
-    // width detection
-    pub const fn width(self) -> RegisterWidth {
-        match self {
-            Self::RAX
-            | Self::RBX
-            | Self::RCX
-            | Self::RDX
-            | Self::RSI
-            | Self::RDI
-            | Self::RBP
-            | Self::RSP
-            | Self::R8
-            | Self::R9
-            | Self::R10
-            | Self::R11
-            | Self::R12
-            | Self::R13
-            | Self::R14
-            | Self::R15 => RegisterWidth::Reg64,
-            Self::EAX
-            | Self::EBX
-            | Self::ECX
-            | Self::EDX
-            | Self::ESI
-            | Self::EDI
-            | Self::EBP
-            | Self::ESP
-            | Self::R8D
-            | Self::R9D
-            | Self::R10D
-            | Self::R11D
-            | Self::R12D
-            | Self::R13D
-            | Self::R14D
-            | Self::R15D => RegisterWidth::Reg32,
-            Self::AX
-            | Self::BX
-            | Self::CX
-            | Self::DX
-            | Self::SI
-            | Self::DI
-            | Self::BP
-            | Self::SP
-            | Self::R8W
-            | Self::R9W
-            | Self::R10W
-            | Self::R11W
-            | Self::R12W
-            | Self::R13W
-            | Self::R14W
-            | Self::R15W => RegisterWidth::Reg16,
-            _ => RegisterWidth::Reg8,
-        }
-    }
-
-    // output is predictable
-    pub const fn as_str(self) -> &'static str {
-        match self {
-            Self::RAX => "RAX",
-            Self::EAX => "EAX",
-            Self::AX => "AX",
-            Self::AL => "AL",
-            Self::AH => "AH",
-            Self::RBX => "RBX",
-            Self::EBX => "EBX",
-            Self::BX => "BX",
-            Self::BL => "BL",
-            Self::BH => "BH",
-            Self::RCX => "RCX",
-            Self::ECX => "ECX",
-            Self::CX => "CX",
-            Self::CL => "CL",
-            Self::CH => "CH",
-            Self::RDX => "RDX",
-            Self::EDX => "EDX",
-            Self::DX => "DX",
-            Self::DL => "DL",
-            Self::DH => "DH",
-            Self::RSI => "RSI",
-            Self::ESI => "ESI",
-            Self::SI => "SI",
-            Self::SIL => "SIL",
-            Self::RDI => "RDI",
-            Self::EDI => "EDI",
-            Self::DI => "DI",
-            Self::DIL => "DIL",
-            Self::RBP => "RBP",
-            Self::EBP => "EBP",
-            Self::BP => "BP",
-            Self::BPL => "BPL",
-            Self::RSP => "RSP",
-            Self::ESP => "ESP",
-            Self::SP => "SP",
-            Self::SPL => "SPL",
-            Self::R8 => "R8",
-            Self::R8D => "R8D",
-            Self::R8W => "R8W",
-            Self::R8B => "R8B",
-            Self::R9 => "R9",
-            Self::R9D => "R9D",
-            Self::R9W => "R9W",
-            Self::R9B => "R9B",
-            Self::R10 => "R10",
-            Self::R10D => "R10D",
-            Self::R10W => "R10W",
-            Self::R10B => "R10B",
-            Self::R11 => "R11",
-            Self::R11D => "R11D",
-            Self::R11W => "R11W",
-            Self::R11B => "R11B",
-            Self::R12 => "R12",
-            Self::R12D => "R12D",
-            Self::R12W => "R12W",
-            Self::R12B => "R12B",
-            Self::R13 => "R13",
-            Self::R13D => "R13D",
-            Self::R13W => "R13W",
-            Self::R13B => "R13B",
-            Self::R14 => "R14",
-            Self::R14D => "R14D",
-            Self::R14W => "R14W",
-            Self::R14B => "R14B",
-            Self::R15 => "R15",
-            Self::R15D => "R15D",
-            Self::R15W => "R15W",
-            Self::R15B => "R15B",
+    for name in declared_names.into_iter().rev() {
+        let widths = active
+            .get_mut(&name)
+            .expect("type scope must contain its declared alias");
+        widths.pop();
+        if widths.is_empty() {
+            active.remove(&name);
         }
     }
 }
 
-impl fmt::Display for PhysicalRegister {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
+fn validate_operand_types(
+    operand: &Operand,
+    active: &HashMap<String, Vec<RegisterWidth>>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let Operand::MemoryAddress(address) = operand else {
+        return;
+    };
+
+    for register in address
+        .base
+        .iter()
+        .chain(address.index.iter().map(|index| &index.register))
+    {
+        if register_width(register, active) != Some(RegisterWidth::Reg64) {
+            diagnostics.push(Diagnostic::new(
+                "Memory address registers must have reg64 width",
+            ));
+        }
+    }
+
+    if let Some(index) = &address.index {
+        if !matches!(index.scale, 1 | 2 | 4 | 8) {
+            diagnostics.push(Diagnostic::new(format!(
+                "Memory index scale must be 1, 2, 4, or 8, found {}",
+                index.scale
+            )));
+        }
     }
 }
 
-impl PhysicalRegister {
-    // returns a compact index for the 64-bit root
-    // RAX, RBX, RCX, RDX, RSI, RDI, RBP, RSP, R8..R15
-    // from 0 to 15
-    pub const fn root_index(self) -> u8 {
-        match self {
-            Self::RAX | Self::EAX | Self::AX | Self::AL | Self::AH => 0,
-            Self::RBX | Self::EBX | Self::BX | Self::BL | Self::BH => 1,
-            Self::RCX | Self::ECX | Self::CX | Self::CL | Self::CH => 2,
-            Self::RDX | Self::EDX | Self::DX | Self::DL | Self::DH => 3,
-            Self::RSI | Self::ESI | Self::SI | Self::SIL => 4,
-            Self::RDI | Self::EDI | Self::DI | Self::DIL => 5,
-            Self::RBP | Self::EBP | Self::BP | Self::BPL => 6,
-            Self::RSP | Self::ESP | Self::SP | Self::SPL => 7,
-            Self::R8 | Self::R8D | Self::R8W | Self::R8B => 8,
-            Self::R9 | Self::R9D | Self::R9W | Self::R9B => 9,
-            Self::R10 | Self::R10D | Self::R10W | Self::R10B => 10,
-            Self::R11 | Self::R11D | Self::R11W | Self::R11B => 11,
-            Self::R12 | Self::R12D | Self::R12W | Self::R12B => 12,
-            Self::R13 | Self::R13D | Self::R13W | Self::R13B => 13,
-            Self::R14 | Self::R14D | Self::R14W | Self::R14B => 14,
-            Self::R15 | Self::R15D | Self::R15W | Self::R15B => 15,
-        }
+fn register_width(
+    register: &Register,
+    active: &HashMap<String, Vec<RegisterWidth>>,
+) -> Option<RegisterWidth> {
+    match register {
+        Register::Physical(physical) => Some(physical.width()),
+        Register::Alias(name) => active.get(name).and_then(|widths| widths.last().copied()),
+    }
+}
+
+fn validate_instruction_types(
+    instruction: &Instruction,
+    active: &HashMap<String, Vec<RegisterWidth>>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let Some(mnemonic) = supported_width_checked_mnemonic(&instruction.mnemonic.0) else {
+        return;
+    };
+
+    if instruction.operands.len() < 2 {
+        return;
     }
 
-    pub const fn bit_range(self) -> (u8, u8) {
-        match self {
-            // 64 bit full range
-            Self::RAX
-            | Self::RBX
-            | Self::RCX
-            | Self::RDX
-            | Self::RSI
-            | Self::RDI
-            | Self::RBP
-            | Self::RSP
-            | Self::R8
-            | Self::R9
-            | Self::R10
-            | Self::R11
-            | Self::R12
-            | Self::R13
-            | Self::R14
-            | Self::R15 => (0, 64),
+    let (Operand::Register(left), Operand::Register(right)) =
+        (&instruction.operands[0], &instruction.operands[1])
+    else {
+        return;
+    };
 
-            // 32 bit low
-            Self::EAX
-            | Self::EBX
-            | Self::ECX
-            | Self::EDX
-            | Self::ESI
-            | Self::EDI
-            | Self::EBP
-            | Self::ESP
-            | Self::R8D
-            | Self::R9D
-            | Self::R10D
-            | Self::R11D
-            | Self::R12D
-            | Self::R13D
-            | Self::R14D
-            | Self::R15D => (0, 32),
+    let (Some(left_width), Some(right_width)) =
+        (register_width(left, active), register_width(right, active))
+    else {
+        return;
+    };
 
-            // 16 bit low
-            Self::AX
-            | Self::BX
-            | Self::CX
-            | Self::DX
-            | Self::SI
-            | Self::DI
-            | Self::BP
-            | Self::SP
-            | Self::R8W
-            | Self::R9W
-            | Self::R10W
-            | Self::R11W
-            | Self::R12W
-            | Self::R13W
-            | Self::R14W
-            | Self::R15W => (0, 16),
-
-            // 8 bit low
-            Self::AL
-            | Self::BL
-            | Self::CL
-            | Self::DL
-            | Self::SIL
-            | Self::DIL
-            | Self::BPL
-            | Self::SPL
-            | Self::R8B
-            | Self::R9B
-            | Self::R10B
-            | Self::R11B
-            | Self::R12B
-            | Self::R13B
-            | Self::R14B
-            | Self::R15B => (0, 8),
-
-            // 8 bit High in low 16
-            Self::AH | Self::BH | Self::CH | Self::DH => (8, 8),
-        }
+    if left_width != right_width {
+        diagnostics.push(Diagnostic::new(format!(
+            "Instruction '{}' requires matching register widths, found {} and {}",
+            mnemonic, left_width, right_width
+        )));
     }
+}
 
-    pub const fn overlaps(self, other: Self) -> bool {
-        if self.root_index() != other.root_index() {
-            return false;
-        }
-        let (s_start, s_width) = self.bit_range();
-        let (o_start, o_width) = other.bit_range();
+fn supported_width_checked_mnemonic(mnemonic: &str) -> Option<&str> {
+    match mnemonic {
+        "mov" | "add" | "sub" | "xor" | "cmp" | "test" => Some(mnemonic),
+        _ => None,
+    }
+}
 
-        // computing the end
-        let s_end = s_start as u16 + s_width as u16;
-        let o_end = o_start as u16 + o_width as u16;
+fn validate_condition_types(
+    condition: &Condition,
+    active: &HashMap<String, Vec<RegisterWidth>>,
+    diagnostics: &mut Vec<Diagnostic>,
+) {
+    let (Operand::Register(left), Operand::Register(right)) = (&condition.left, &condition.right)
+    else {
+        return;
+    };
 
-        !(s_end <= o_start as u16 || o_end <= s_start as u16)
+    let (Some(left_width), Some(right_width)) =
+        (register_width(left, active), register_width(right, active))
+    else {
+        return;
+    };
+
+    if left_width != right_width {
+        diagnostics.push(Diagnostic::new(format!(
+            "Condition requires matching register widths, found {} and {}",
+            left_width, right_width
+        )));
     }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct MemoryAddress {
-    pub base: Option<Register>,
-    pub index: Option<IndexedRegister>,
-    pub displacement: i64,
+pub struct ScopeInfo {
+    pub id: usize,
+    pub parent: Option<usize>,
+    pub depth: usize,
+    pub statement_count: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IndexedRegister {
-    pub register: Register,
-    pub scale: u8,
+pub struct AliasLifetime {
+    pub name: Ident,
+    pub width: RegisterWidth,
+    pub physical: PhysicalRegister,
+    pub scope_id: usize,
+    pub declaration_index: usize,
+    pub end_index: usize,
+    pub uses: Vec<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct If {
-    pub condition: Condition,
-    pub then_block: ScopeBlock,
-    pub else_block: Option<ScopeBlock>,
+pub struct LivenessReport {
+    pub scopes: Vec<ScopeInfo>,
+    pub aliases: Vec<AliasLifetime>,
+    pub diagnostics: Vec<Diagnostic>,
 }
 
-// while loop
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct While {
-    pub condition: Condition,
-    pub body: ScopeBlock,
+pub fn analyze_liveness(block: &ScopeBlock) -> LivenessReport {
+    let mut report = LivenessReport {
+        scopes: Vec::new(),
+        aliases: Vec::new(),
+        diagnostics: Vec::new(),
+    };
+    let mut active = HashMap::new();
+    walk_liveness(block, None, 0, &mut active, &mut report);
+    report
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Condition {
-    pub left: Operand,
-    pub op: ComparisonOp,
-    pub right: Operand,
+pub fn analyze_program_liveness(prog: &crate::ast::Program) -> Vec<LivenessReport> {
+    prog.functions
+        .iter()
+        .map(|function| analyze_liveness(&function.body))
+        .collect()
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ComparisonOp {
-    Eq,
-    Ne,
-    Lt,
-    Le,
-    Gt,
-    Ge,
+fn walk_liveness(
+    block: &ScopeBlock,
+    parent: Option<usize>,
+    depth: usize,
+    active: &mut HashMap<String, Vec<usize>>,
+    report: &mut LivenessReport,
+) {
+    let scope_id = report.scopes.len();
+    report.scopes.push(ScopeInfo {
+        id: scope_id,
+        parent,
+        depth,
+        statement_count: block.statements.len(),
+    });
+
+    let mut declared_names = Vec::new();
+    for (statement_index, statement) in block.statements.iter().enumerate() {
+        match statement {
+            Statement::AliasDecl(alias) => {
+                let lifetime = report.aliases.len();
+                report.aliases.push(AliasLifetime {
+                    name: alias.name.clone(),
+                    width: alias.width,
+                    physical: alias.physical,
+                    scope_id,
+                    declaration_index: statement_index,
+                    end_index: block.statements.len(),
+                    uses: Vec::new(),
+                });
+                active.entry(alias.name.clone()).or_default().push(lifetime);
+                declared_names.push(alias.name.clone());
+            }
+            Statement::Instruction(instruction) => {
+                for operand in &instruction.operands {
+                    record_operand_use(operand, statement_index, active, report);
+                }
+            }
+            Statement::If(if_statement) => {
+                record_operand_use(
+                    &if_statement.condition.left,
+                    statement_index,
+                    active,
+                    report,
+                );
+                record_operand_use(
+                    &if_statement.condition.right,
+                    statement_index,
+                    active,
+                    report,
+                );
+                walk_liveness(
+                    &if_statement.then_block,
+                    Some(scope_id),
+                    depth + 1,
+                    active,
+                    report,
+                );
+                if let Some(else_block) = &if_statement.else_block {
+                    walk_liveness(else_block, Some(scope_id), depth + 1, active, report);
+                }
+            }
+            Statement::While(while_statement) => {
+                record_operand_use(
+                    &while_statement.condition.left,
+                    statement_index,
+                    active,
+                    report,
+                );
+                record_operand_use(
+                    &while_statement.condition.right,
+                    statement_index,
+                    active,
+                    report,
+                );
+                walk_liveness(
+                    &while_statement.body,
+                    Some(scope_id),
+                    depth + 1,
+                    active,
+                    report,
+                );
+            }
+            Statement::ScopeBlock(nested) => {
+                walk_liveness(nested, Some(scope_id), depth + 1, active, report);
+            }
+            Statement::Unsafe(nested) => {
+                walk_liveness(nested, Some(scope_id), depth + 1, active, report);
+            }
+            Statement::Break | Statement::Continue => {}
+        }
+    }
+    for name in declared_names.into_iter().rev() {
+        let lifetimes = active
+            .get_mut(&name)
+            .expect("liveness scope must contain its declared alias");
+        lifetimes.pop();
+        if lifetimes.is_empty() {
+            active.remove(&name);
+        }
+    }
+}
+
+fn record_operand_use(
+    operand: &Operand,
+    statement_index: usize,
+    active: &HashMap<String, Vec<usize>>,
+    report: &mut LivenessReport,
+) {
+    match operand {
+        Operand::Register(Register::Alias(name)) => {
+            record_alias_use(name, statement_index, active, report)
+        }
+        Operand::MemoryAddress(address) => {
+            if let Some(base) = &address.base {
+                record_register_use(base, statement_index, active, report);
+            }
+            if let Some(index) = &address.index {
+                record_register_use(&index.register, statement_index, active, report);
+            }
+        }
+        Operand::Register(Register::Physical(_)) | Operand::Immediate(_) | Operand::Symbol(_) => {}
+    }
+}
+
+fn record_register_use(
+    register: &Register,
+    statement_index: usize,
+    active: &HashMap<String, Vec<usize>>,
+    report: &mut LivenessReport,
+) {
+    if let Register::Alias(name) = register {
+        record_alias_use(name, statement_index, active, report);
+    }
+}
+
+fn record_alias_use(
+    name: &str,
+    statement_index: usize,
+    active: &HashMap<String, Vec<usize>>,
+    report: &mut LivenessReport,
+) {
+    if let Some(lifetimes) = active.get(name) {
+        let lifetime = *lifetimes
+            .last()
+            .expect("alias stack must contain an active lifetime");
+        report.aliases[lifetime].uses.push(statement_index);
+    } else {
+        report.diagnostics.push(Diagnostic::new(format!(
+            "Unknown alias '{}' used in statement {}",
+            name, statement_index
+        )));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::{AliasDecl, PhysicalRegister, RegisterWidth, ScopeBlock, Statement};
+
+    #[test]
+    fn detects_overlapping_aliases_in_same_block() {
+        let a1 = AliasDecl {
+            name: "a".into(),
+            width: RegisterWidth::Reg64,
+            physical: PhysicalRegister::RAX,
+            span: None,
+        };
+
+        let a2 = AliasDecl {
+            name: "b".into(),
+            width: RegisterWidth::Reg32,
+            physical: PhysicalRegister::EAX,
+            span: None,
+        };
+
+        let block = ScopeBlock {
+            statements: vec![Statement::AliasDecl(a1), Statement::AliasDecl(a2)],
+        };
+
+        let diags = validate_aliases(&block);
+        assert!(!diags.is_empty(), "expected a conflict diagnostic");
+        assert!(diags[0].message.contains("overlaps"));
+    }
+
+    #[test]
+    fn allows_nonoverlapping_aliases() {
+        let a1 = AliasDecl {
+            name: "a".into(),
+            width: RegisterWidth::Reg64,
+            physical: PhysicalRegister::RAX,
+            span: None,
+        };
+
+        let a2 = AliasDecl {
+            name: "b".into(),
+            width: RegisterWidth::Reg64,
+            physical: PhysicalRegister::RBX,
+            span: None,
+        };
+
+        let block = ScopeBlock {
+            statements: vec![Statement::AliasDecl(a1), Statement::AliasDecl(a2)],
+        };
+
+        let diags = validate_aliases(&block);
+        assert!(diags.is_empty(), "expected no conflicts");
+    }
+
+    #[test]
+    fn detects_alias_width_mismatch() {
+        let block = ScopeBlock {
+            statements: vec![Statement::AliasDecl(AliasDecl {
+                name: "value".into(),
+                width: RegisterWidth::Reg64,
+                physical: PhysicalRegister::EAX,
+                span: None,
+            })],
+        };
+
+        let diags = validate_types(&block);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("declares reg64"));
+    }
+
+    #[test]
+    fn detects_register_width_mismatch_in_instruction() {
+        let block = ScopeBlock {
+            statements: vec![Statement::Instruction(Instruction {
+                mnemonic: Mnemonic("mov".into()),
+                operands: vec![
+                    Operand::Register(Register::Physical(PhysicalRegister::RAX)),
+                    Operand::Register(Register::Physical(PhysicalRegister::EBX)),
+                ],
+            })],
+        };
+
+        let diags = validate_types(&block);
+        assert_eq!(diags.len(), 1);
+        assert!(diags[0].message.contains("matching register widths"));
+    }
+
+    #[test]
+    fn detects_invalid_memory_register_width_and_scale() {
+        let block = ScopeBlock {
+            statements: vec![Statement::Instruction(Instruction {
+                mnemonic: Mnemonic("mov".into()),
+                operands: vec![
+                    Operand::Register(Register::Physical(PhysicalRegister::RAX)),
+                    Operand::MemoryAddress(MemoryAddress {
+                        base: Some(Register::Physical(PhysicalRegister::EAX)),
+                        index: Some(IndexedRegister {
+                            register: Register::Physical(PhysicalRegister::RBX),
+                            scale: 3,
+                        }),
+                        displacement: 0,
+                    }),
+                ],
+            })],
+        };
+
+        let diags = validate_types(&block);
+        assert_eq!(diags.len(), 2);
+        assert!(diags[0].message.contains("reg64 width"));
+        assert!(diags[1].message.contains("scale"));
+    }
+
+    #[test]
+    fn allows_matching_register_widths_in_conditions() {
+        let block = ScopeBlock {
+            statements: vec![Statement::If(If {
+                condition: Condition {
+                    left: Operand::Register(Register::Physical(PhysicalRegister::EAX)),
+                    op: ComparisonOp::Eq,
+                    right: Operand::Register(Register::Physical(PhysicalRegister::EBX)),
+                },
+                then_block: ScopeBlock { statements: vec![] },
+                else_block: None,
+            })],
+        };
+
+        assert!(validate_types(&block).is_empty());
+    }
+
+    #[test]
+    fn detects_conflict_with_parent_scope_alias() {
+        let parent = AliasDecl {
+            name: "p".into(),
+            width: RegisterWidth::Reg64,
+            physical: PhysicalRegister::RAX,
+            span: None,
+        };
+
+        let child = AliasDecl {
+            name: "c".into(),
+            width: RegisterWidth::Reg16,
+            physical: PhysicalRegister::AX,
+            span: None,
+        };
+
+        let child_block = ScopeBlock {
+            statements: vec![Statement::AliasDecl(child)],
+        };
+
+        let block = ScopeBlock {
+            statements: vec![
+                Statement::AliasDecl(parent),
+                Statement::ScopeBlock(child_block),
+            ],
+        };
+
+        let diags = validate_aliases(&block);
+        assert!(
+            !diags.is_empty(),
+            "expected conflict between parent and child alias"
+        );
+    }
+
+    #[test]
+    fn tracks_alias_lifetimes_and_nested_scope_visibility() {
+        let block = ScopeBlock {
+            statements: vec![
+                Statement::AliasDecl(AliasDecl {
+                    name: "parent".into(),
+                    width: RegisterWidth::Reg64,
+                    physical: PhysicalRegister::RAX,
+                    span: None,
+                }),
+                Statement::ScopeBlock(ScopeBlock {
+                    statements: vec![
+                        Statement::Instruction(Instruction {
+                            mnemonic: Mnemonic("mov".into()),
+                            operands: vec![Operand::Register(Register::Alias("parent".into()))],
+                        }),
+                        Statement::AliasDecl(AliasDecl {
+                            name: "child".into(),
+                            width: RegisterWidth::Reg32,
+                            physical: PhysicalRegister::RBX,
+                            span: None,
+                        }),
+                    ],
+                }),
+                Statement::Instruction(Instruction {
+                    mnemonic: Mnemonic("mov".into()),
+                    operands: vec![Operand::Register(Register::Alias("child".into()))],
+                }),
+            ],
+        };
+
+        let report = analyze_liveness(&block);
+        assert_eq!(report.scopes.len(), 2);
+        assert_eq!(report.scopes[1].parent, Some(0));
+        assert_eq!(report.aliases.len(), 2);
+        assert_eq!(report.aliases[0].declaration_index, 0);
+        assert_eq!(report.aliases[0].end_index, 3);
+        assert_eq!(report.aliases[0].uses, vec![0]);
+        assert_eq!(report.aliases[1].scope_id, 1);
+        assert!(report.aliases[1].uses.is_empty());
+        assert_eq!(report.diagnostics.len(), 1);
+        assert!(report.diagnostics[0]
+            .message
+            .contains("Unknown alias 'child'"));
+    }
+
+    #[test]
+    fn program_analysis_reports_unknown_aliases() {
+        let program = Program {
+            functions: vec![FunctionDecl {
+                name: "main".into(),
+                params: Vec::new(),
+                body: ScopeBlock {
+                    statements: vec![Statement::Instruction(Instruction {
+                        mnemonic: Mnemonic("mov".into()),
+                        operands: vec![Operand::Register(Register::Alias("missing".into()))],
+                    })],
+                },
+            }],
+        };
+
+        let diagnostics = analyze_program(&program);
+        assert_eq!(diagnostics.len(), 1);
+        assert!(diagnostics[0].message.contains("In function 'main'"));
+        assert!(diagnostics[0].message.contains("Unknown alias 'missing'"));
+    }
 }
