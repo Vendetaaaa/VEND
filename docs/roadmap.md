@@ -45,3 +45,9 @@ Support explicit `unsafe { ... }` blocks for hand-tuned low-level patterns.
 The `vend` command-line binary parses and validates a source file, lowers
 structured control flow, and emits Intel-syntax x86-64 assembly. It supports
 `--abi systemv|windows` and `-o/--output`.
+
+## Stage 11: Loop Exit Controls [x]
+
+Support `break` and `continue` inside `while` loops, with semantic validation
+that rejects loop-control statements outside a loop and lowering that targets
+the nearest loop's end or next-iteration label.
