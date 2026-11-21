@@ -49,3 +49,17 @@ fn cli_reports_semantic_diagnostics() {
     let diagnostics = String::from_utf8_lossy(&output.stderr);
     assert!(diagnostics.contains("matching register widths"));
 }
+
+#[test]
+fn cli_rejects_break_outside_a_loop() {
+    let source = temp_source("break-outside-loop", "fn main() { break }");
+    let output = Command::new(env!("CARGO_BIN_EXE_vend"))
+        .arg(&source)
+        .output()
+        .expect("vend binary should run");
+    fs::remove_file(source).expect("temporary source should be removable");
+
+    assert!(!output.status.success());
+    let diagnostics = String::from_utf8_lossy(&output.stderr);
+    assert!(diagnostics.contains("'break' is only valid inside a 'while' loop"));
+}
