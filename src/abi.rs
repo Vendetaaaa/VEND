@@ -110,7 +110,11 @@ fn validate_block(statements: &[Statement], _abi: Abi, diagnostics: &mut Vec<Dia
                 validate_block(&while_statement.body.statements, _abi, diagnostics);
             }
             Statement::ScopeBlock(block) => validate_block(&block.statements, _abi, diagnostics),
-            Statement::AliasDecl(_) | Statement::Instruction(_) => {}
+            Statement::Unsafe(block) => validate_block(&block.statements, _abi, diagnostics),
+            Statement::AliasDecl(_)
+            | Statement::Instruction(_)
+            | Statement::Break
+            | Statement::Continue => {}
         }
     }
 }
