@@ -11,6 +11,8 @@ pub enum Token {
     If,
     Else,
     While,
+    Break,
+    Continue,
     Unsafe,
 
     // ids
@@ -65,6 +67,8 @@ impl fmt::Display for Token {
             Token::If => write!(f, "'if'"),
             Token::Else => write!(f, "'else'"),
             Token::While => write!(f, "'while'"),
+            Token::Break => write!(f, "'break'"),
+            Token::Continue => write!(f, "'continue'"),
             Token::Unsafe => write!(f, "'unsafe'"),
             Token::Ident(s) => write!(f, "identifier '{}'", s),
             Token::Integer(n) => write!(f, "integer {}", n),
@@ -226,6 +230,8 @@ impl Lexer {
             "if" => Token::If,
             "else" => Token::Else,
             "while" => Token::While,
+            "break" => Token::Break,
+            "continue" => Token::Continue,
             "unsafe" => Token::Unsafe,
             "reg64" => Token::Reg64,
             "reg32" => Token::Reg32,
@@ -632,6 +638,8 @@ impl Parser {
             Token::Alias
                 | Token::If
                 | Token::While
+                | Token::Break
+                | Token::Continue
                 | Token::Unsafe
                 | Token::LBrace
                 | Token::Ident(_)
@@ -643,6 +651,14 @@ impl Parser {
             Token::Alias => self.parse_alias_decl().map(Statement::AliasDecl),
             Token::If => self.parse_if().map(Statement::If),
             Token::While => self.parse_while().map(Statement::While),
+            Token::Break => {
+                self.advance();
+                Ok(Statement::Break)
+            }
+            Token::Continue => {
+                self.advance();
+                Ok(Statement::Continue)
+            }
             Token::Unsafe => self.parse_unsafe().map(Statement::Unsafe),
             Token::LBrace => self.parse_nested_block().map(Statement::ScopeBlock),
             Token::Ident(_) => self.parse_instruction().map(Statement::Instruction),
